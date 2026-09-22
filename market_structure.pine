@@ -79,6 +79,26 @@ addPoint(array<int> types, array<float> prices, array<int> times, array<line> se
                     array.pop(times)
     array.size(types)
 
+// Confirmation order can differ from pivot order. Store unique pivots by their
+// actual bar time and rebuild the medium structure in chronological order.
+recordMidPoint(array<int> types, array<float> prices, array<int> times, int pointType, float pointPrice, int pointTime) =>
+    int position = 0
+    while position < array.size(times) and array.get(times, position) < pointTime
+        position += 1
+    if position == array.size(times) or array.get(times, position) != pointTime
+        array.insert(types, position, pointType)
+        array.insert(prices, position, pointPrice)
+        array.insert(times, position, pointTime)
+    else if array.get(types, position) == pointType
+        float previous = array.get(prices, position)
+        if pointType == 1 ? pointPrice > previous : pointPrice < previous
+            array.set(prices, position, pointPrice)
+    if array.size(times) > 200
+        array.shift(types)
+        array.shift(prices)
+        array.shift(times)
+    array.size(times)
+
 var shortTypes = array.new_int()
 var shortPrices = array.new_float()
 var shortTimes = array.new_int()
@@ -87,6 +107,10 @@ var midTypes = array.new_int()
 var midPrices = array.new_float()
 var midTimes = array.new_int()
 var midSegments = array.new_line()
+var midEventTypes = array.new_int()
+var midEventPrices = array.new_float()
+var midEventTimes = array.new_int()
+var midLabels = array.new_label()
 
 // 原始孤立点标记保留；内包只从结构折线中合并。
 if newHigh or newLow
@@ -190,18 +214,14 @@ if inTrend
             pendingLow := na
             pendingLowIndex := na
             pendingLowTime := na
-        if showMidPoints
-            label.new(candidateHighTime, candidateHigh, "中高", xloc = xloc.bar_time, style = label.style_label_down, color = midColor, textcolor = color.white, size = size.tiny)
-        addPoint(midTypes, midPrices, midTimes, midSegments, 1, candidateHigh, candidateHighTime, midColor, 2, showMidLines, midContainment)
+        recordMidPoint(midEventTypes, midEventPrices, midEventTimes, 1, candidateHigh, candidateHighTime)
         candidateHigh := na
         candidateHighBase := na
     else if recoveryUp
         newMidLow := true
         confirmedMidLow := pendingLow
         confirmedMidLowIndex := pendingLowIndex
-        if showMidPoints
-            label.new(pendingLowTime, pendingLow, "中低", xloc = xloc.bar_time, style = label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
-        addPoint(midTypes, midPrices, midTimes, midSegments, -1, pendingLow, pendingLowTime, midColor, 2, showMidLines, midContainment)
+        recordMidPoint(midEventTypes, midEventPrices, midEventTimes, -1, pendingLow, pendingLowTime)
         confirmedMidHigh := na
         confirmedMidHighIndex := na
         pendingLow := na
@@ -216,23 +236,41 @@ if inTrend
             pendingHigh := na
             pendingHighIndex := na
             pendingHighTime := na
-        if showMidPoints
-            label.new(candidateLowTime, candidateLow, "中低", xloc = xloc.bar_time, style = label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
-        addPoint(midTypes, midPrices, midTimes, midSegments, -1, candidateLow, candidateLowTime, midColor, 2, showMidLines, midContainment)
+        recordMidPoint(midEventTypes, midEventPrices, midEventTimes, -1, candidateLow, candidateLowTime)
         candidateLow := na
         candidateLowBase := na
     else if recoveryDown
         newMidHigh := true
         confirmedMidHigh := pendingHigh
         confirmedMidHighIndex := pendingHighIndex
-        if showMidPoints
-            label.new(pendingHighTime, pendingHigh, "中高", xloc = xloc.bar_time, style = label.style_label_down, color = midColor, textcolor = color.white, size = size.tiny)
-        addPoint(midTypes, midPrices, midTimes, midSegments, 1, pendingHigh, pendingHighTime, midColor, 2, showMidLines, midContainment)
+        recordMidPoint(midEventTypes, midEventPrices, midEventTimes, 1, pendingHigh, pendingHighTime)
         confirmedMidLow := na
         confirmedMidLowIndex := na
         pendingHigh := na
         pendingHighIndex := na
         pendingHighTime := na
+
+// Labels are created only for pivots surviving same-type and containment
+// processing, so the chart and the medium structure line describe the same points.
+if barstate.islast
+    for segment in midSegments
+        if not na(segment)
+            line.delete(segment)
+    for pointLabel in midLabels
+        label.delete(pointLabel)
+    array.clear(midTypes)
+    array.clear(midPrices)
+    array.clear(midTimes)
+    array.clear(midSegments)
+    array.clear(midLabels)
+    if array.size(midEventTimes) > 0
+        for i = 0 to array.size(midEventTimes) - 1
+            addPoint(midTypes, midPrices, midTimes, midSegments, array.get(midEventTypes, i), array.get(midEventPrices, i), array.get(midEventTimes, i), midColor, 2, showMidLines, midContainment)
+    if showMidPoints and array.size(midTimes) > 0
+        for i = 0 to array.size(midTimes) - 1
+            bool isHigh = array.get(midTypes, i) == 1
+            label pointLabel = label.new(array.get(midTimes, i), array.get(midPrices, i), isHigh ? "中高" : "中低", xloc = xloc.bar_time, style = isHigh ? label.style_label_down : label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
+            array.push(midLabels, pointLabel)
 
 alertcondition(newHigh, "短期高点确认", "短期高点已确认")
 alertcondition(newLow, "短期低点确认", "短期低点已确认")
