@@ -18,38 +18,71 @@ shortColor = color.new(color.teal, 15)
 midColor = color.rgb(194, 64, 55)
 ph = ta.pivothigh(high, leftBars, rightBars)
 pl = ta.pivotlow(low, leftBars, rightBars)
+leftHigh = ta.highest(high[rightBars + 1], leftBars)
+rightHigh = ta.highest(high, rightBars)
+leftLow = ta.lowest(low[rightBars + 1], leftBars)
+rightLow = ta.lowest(low, rightBars)
+strictHigh = not na(ph) and high[rightBars] > leftHigh and high[rightBars] > rightHigh
+strictLow = not na(pl) and low[rightBars] < leftLow and low[rightBars] < rightLow
 // 同一根 K 线同时形成高低点时，日内先后顺序未知，不强行连接。
-ambiguous = not na(ph) and not na(pl)
-newHigh = not na(ph) and not ambiguous
-newLow = not na(pl) and not ambiguous
+ambiguous = strictHigh and strictLow
+newHigh = barstate.isconfirmed and strictHigh and not ambiguous
+newLow = barstate.isconfirmed and strictLow and not ambiguous
 plotshape(showShortPoints and newHigh ? ph : na, "短期高点", shape.triangledown, location.absolute, shortColor, offset = -rightBars, size = size.tiny)
 plotshape(showShortPoints and newLow ? pl : na, "短期低点", shape.triangleup, location.absolute, shortColor, offset = -rightBars, size = size.tiny)
 
-var int lastType = 0
-var float lastPrice = na
-var int lastIndex = na
-var line lastShortLine = na
-
-// 相邻同类点只保留更极端的点；折线只连接不同类的点。
-// 内包结构的合并尚未自动化：短期标记保留原始孤立点，便于人工核对。
-if newHigh or newLow
-    int pointType = newHigh ? 1 : -1
-    float pointPrice = newHigh ? ph : pl
-    int pointIndex = bar_index - rightBars
-    bool moreExtreme = pointType == 1 ? pointPrice > lastPrice : pointPrice < lastPrice
-    if lastType == pointType
+// Each pair of alternating pivots defines a high/low range. An inner pair
+// does not contribute a turn to the displayed structure.
+addPoint(array<int> types, array<float> prices, array<int> times, array<line> segments, int pointType, float pointPrice, int pointTime, color stroke, int width, bool visible) =>
+    int count = array.size(types)
+    if count > 0 and array.get(types, count - 1) == pointType
+        float previous = array.get(prices, count - 1)
+        bool moreExtreme = pointType == 1 ? pointPrice > previous : pointPrice < previous
         if moreExtreme
-            lastPrice := pointPrice
-            lastIndex := pointIndex
-            if not na(lastShortLine)
-                line.set_x2(lastShortLine, pointIndex)
-                line.set_y2(lastShortLine, pointPrice)
+            array.set(prices, count - 1, pointPrice)
+            array.set(times, count - 1, pointTime)
+            if count > 1
+                line segment = array.get(segments, count - 2)
+                if not na(segment)
+                    line.set_x2(segment, pointTime)
+                    line.set_y2(segment, pointPrice)
     else
-        if lastType != 0 and showShortLines
-            lastShortLine := line.new(lastIndex, lastPrice, pointIndex, pointPrice, color = shortColor, width = 1)
-        lastType := pointType
-        lastPrice := pointPrice
-        lastIndex := pointIndex
+        line segment = na
+        if count > 0
+            if visible
+                segment := line.new(array.get(times, count - 1), array.get(prices, count - 1), pointTime, pointPrice, xloc = xloc.bar_time, color = stroke, width = width)
+            array.push(segments, segment)
+        array.push(types, pointType)
+        array.push(prices, pointPrice)
+        array.push(times, pointTime)
+        count := array.size(types)
+        if count >= 4
+            float outerHigh = math.max(array.get(prices, count - 4), array.get(prices, count - 3))
+            float outerLow = math.min(array.get(prices, count - 4), array.get(prices, count - 3))
+            float innerHigh = math.max(array.get(prices, count - 2), array.get(prices, count - 1))
+            float innerLow = math.min(array.get(prices, count - 2), array.get(prices, count - 1))
+            if innerHigh <= outerHigh and innerLow >= outerLow
+                for i = 0 to 1
+                    line removed = array.pop(segments)
+                    if not na(removed)
+                        line.delete(removed)
+                    array.pop(types)
+                    array.pop(prices)
+                    array.pop(times)
+    array.size(types)
+
+var shortTypes = array.new_int()
+var shortPrices = array.new_float()
+var shortTimes = array.new_int()
+var shortSegments = array.new_line()
+var midTypes = array.new_int()
+var midPrices = array.new_float()
+var midTimes = array.new_int()
+var midSegments = array.new_line()
+
+// 原始孤立点标记保留；内包只从结构折线中合并。
+if newHigh or newLow
+    addPoint(shortTypes, shortPrices, shortTimes, shortSegments, newHigh ? 1 : -1, newHigh ? ph : pl, time[rightBars], shortColor, 1, showShortLines)
 
 // 中期确认使用已确认的短期点。突破只在确认 K 线及其后发生，
 // 避免将右侧确认期间的历史价格当作事先已知的信号。
@@ -63,104 +96,114 @@ var float previousShortHigh = na
 var int previousShortHighIndex = na
 var float candidateHigh = na
 var int candidateHighIndex = na
+var int candidateHighTime = na
 var float candidateHighBase = na
 var float candidateLow = na
 var int candidateLowIndex = na
+var int candidateLowTime = na
 var float candidateLowBase = na
 var float confirmedMidHigh = na
+var int confirmedMidHighIndex = na
 var float confirmedMidLow = na
+var int confirmedMidLowIndex = na
 var float pendingLow = na
 var int pendingLowIndex = na
+var int pendingLowTime = na
 var float pendingHigh = na
 var int pendingHighIndex = na
-var int lastMidType = 0
-var float lastMidPrice = na
-var int lastMidIndex = na
-var line lastMidLine = na
+var int pendingHighTime = na
+bool newMidHigh = false
+bool newMidLow = false
 
 if inTrend
     if newLow and pointInTrend
         previousShortLow := pl
         previousShortLowIndex := bar_index - rightBars
-        if trend == "上涨" and ((not na(candidateHighIndex) and previousShortLowIndex > candidateHighIndex) or (not na(confirmedMidHigh) and previousShortLowIndex > lastMidIndex))
+        if trend == "上涨" and ((not na(candidateHighIndex) and previousShortLowIndex > candidateHighIndex) or (not na(confirmedMidHighIndex) and previousShortLowIndex > confirmedMidHighIndex))
             if na(pendingLow) or pl < pendingLow
                 pendingLow := pl
                 pendingLowIndex := previousShortLowIndex
+                pendingLowTime := time[rightBars]
     if newHigh and pointInTrend
         previousShortHigh := ph
         previousShortHighIndex := bar_index - rightBars
-        if trend == "下跌" and ((not na(candidateLowIndex) and previousShortHighIndex > candidateLowIndex) or (not na(confirmedMidLow) and previousShortHighIndex > lastMidIndex))
+        if trend == "下跌" and ((not na(candidateLowIndex) and previousShortHighIndex > candidateLowIndex) or (not na(confirmedMidLowIndex) and previousShortHighIndex > confirmedMidLowIndex))
             if na(pendingHigh) or ph > pendingHigh
                 pendingHigh := ph
                 pendingHighIndex := previousShortHighIndex
+                pendingHighTime := time[rightBars]
 
     if trend == "上涨" and newHigh and pointInTrend and not na(previousShortLow) and previousShortLowIndex < previousShortHighIndex
         if na(candidateHigh) or ph > candidateHigh
             candidateHigh := ph
             candidateHighIndex := previousShortHighIndex
+            candidateHighTime := time[rightBars]
             candidateHighBase := previousShortLow
     if trend == "下跌" and newLow and pointInTrend and not na(previousShortHigh) and previousShortHighIndex < previousShortLowIndex
         if na(candidateLow) or pl < candidateLow
             candidateLow := pl
             candidateLowIndex := previousShortLowIndex
+            candidateLowTime := time[rightBars]
             candidateLowBase := previousShortHigh
 
-    bool midHighEvent = trend == "上涨" and not na(candidateHighBase) and breakDown < candidateHighBase and bar_index > candidateHighIndex
-    bool midLowEvent = trend == "下跌" and not na(candidateLowBase) and breakUp > candidateLowBase and bar_index > candidateLowIndex
-    bool recoveryUp = trend == "上涨" and not na(confirmedMidHigh) and not na(pendingLow) and breakUp > confirmedMidHigh
-    bool recoveryDown = trend == "下跌" and not na(confirmedMidLow) and not na(pendingHigh) and breakDown < confirmedMidLow
+    bool midHighEvent = barstate.isconfirmed and trend == "上涨" and not na(candidateHighBase) and breakDown < candidateHighBase and bar_index > candidateHighIndex
+    bool midLowEvent = barstate.isconfirmed and trend == "下跌" and not na(candidateLowBase) and breakUp > candidateLowBase and bar_index > candidateLowIndex
+    bool recoveryUp = barstate.isconfirmed and trend == "上涨" and not na(confirmedMidHigh) and not na(pendingLow) and breakUp > confirmedMidHigh
+    bool recoveryDown = barstate.isconfirmed and trend == "下跌" and not na(confirmedMidLow) and not na(pendingHigh) and breakDown < confirmedMidLow
 
     if midHighEvent
+        newMidHigh := true
         confirmedMidHigh := candidateHigh
+        confirmedMidHighIndex := candidateHighIndex
         if na(pendingLowIndex) or pendingLowIndex <= candidateHighIndex
             pendingLow := na
             pendingLowIndex := na
+            pendingLowTime := na
         if showMidPoints
-            label.new(candidateHighIndex, candidateHigh, "中高", style = label.style_label_down, color = midColor, textcolor = color.white, size = size.tiny)
-        if lastMidType != 0 and showMidLines
-            lastMidLine := line.new(lastMidIndex, lastMidPrice, candidateHighIndex, candidateHigh, color = midColor, width = 2)
-        lastMidType := 1
-        lastMidPrice := candidateHigh
-        lastMidIndex := candidateHighIndex
+            label.new(candidateHighTime, candidateHigh, "中高", xloc = xloc.bar_time, style = label.style_label_down, color = midColor, textcolor = color.white, size = size.tiny)
+        addPoint(midTypes, midPrices, midTimes, midSegments, 1, candidateHigh, candidateHighTime, midColor, 2, showMidLines)
         candidateHigh := na
         candidateHighBase := na
     else if recoveryUp
+        newMidLow := true
         confirmedMidLow := pendingLow
+        confirmedMidLowIndex := pendingLowIndex
         if showMidPoints
-            label.new(pendingLowIndex, pendingLow, "中低", style = label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
-        if showMidLines
-            lastMidLine := line.new(lastMidIndex, lastMidPrice, pendingLowIndex, pendingLow, color = midColor, width = 2)
-        lastMidType := -1
-        lastMidPrice := pendingLow
-        lastMidIndex := pendingLowIndex
+            label.new(pendingLowTime, pendingLow, "中低", xloc = xloc.bar_time, style = label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
+        addPoint(midTypes, midPrices, midTimes, midSegments, -1, pendingLow, pendingLowTime, midColor, 2, showMidLines)
         confirmedMidHigh := na
+        confirmedMidHighIndex := na
         pendingLow := na
+        pendingLowIndex := na
+        pendingLowTime := na
 
     if midLowEvent
+        newMidLow := true
         confirmedMidLow := candidateLow
+        confirmedMidLowIndex := candidateLowIndex
         if na(pendingHighIndex) or pendingHighIndex <= candidateLowIndex
             pendingHigh := na
             pendingHighIndex := na
+            pendingHighTime := na
         if showMidPoints
-            label.new(candidateLowIndex, candidateLow, "中低", style = label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
-        if lastMidType != 0 and showMidLines
-            lastMidLine := line.new(lastMidIndex, lastMidPrice, candidateLowIndex, candidateLow, color = midColor, width = 2)
-        lastMidType := -1
-        lastMidPrice := candidateLow
-        lastMidIndex := candidateLowIndex
+            label.new(candidateLowTime, candidateLow, "中低", xloc = xloc.bar_time, style = label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
+        addPoint(midTypes, midPrices, midTimes, midSegments, -1, candidateLow, candidateLowTime, midColor, 2, showMidLines)
         candidateLow := na
         candidateLowBase := na
     else if recoveryDown
+        newMidHigh := true
         confirmedMidHigh := pendingHigh
+        confirmedMidHighIndex := pendingHighIndex
         if showMidPoints
-            label.new(pendingHighIndex, pendingHigh, "中高", style = label.style_label_down, color = midColor, textcolor = color.white, size = size.tiny)
-        if showMidLines
-            lastMidLine := line.new(lastMidIndex, lastMidPrice, pendingHighIndex, pendingHigh, color = midColor, width = 2)
-        lastMidType := 1
-        lastMidPrice := pendingHigh
-        lastMidIndex := pendingHighIndex
+            label.new(pendingHighTime, pendingHigh, "中高", xloc = xloc.bar_time, style = label.style_label_down, color = midColor, textcolor = color.white, size = size.tiny)
+        addPoint(midTypes, midPrices, midTimes, midSegments, 1, pendingHigh, pendingHighTime, midColor, 2, showMidLines)
         confirmedMidLow := na
+        confirmedMidLowIndex := na
         pendingHigh := na
+        pendingHighIndex := na
+        pendingHighTime := na
 
 alertcondition(newHigh, "短期高点确认", "短期高点已确认")
 alertcondition(newLow, "短期低点确认", "短期低点已确认")
+alertcondition(newMidHigh, "中期高点确认", "中期高点已确认")
+alertcondition(newMidLow, "中期低点确认", "中期低点已确认")
