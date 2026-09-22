@@ -6,13 +6,15 @@ leftBars = input.int(1, "左侧确认 K 线数", minval = 1, maxval = 20, group 
 rightBars = input.int(1, "右侧确认 K 线数", minval = 1, maxval = 20, group = groupShort)
 showShortPoints = input.bool(true, "显示短期点", group = groupShort)
 showShortLines = input.bool(true, "显示短期结构线", group = groupShort)
+shortContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "严格内包要求内侧高低点均不接触外侧边界；含边界内包允许相等；关闭时保留全部交替结构点。", group = groupShort)
 
 groupMid = "中期结构"
-trend = input.string("上涨", "已定义的趋势", options = ["上涨", "下跌"], group = groupMid)
+trendMode = input.string("自动/双向", "趋势模式", options = ["上涨", "下跌", "自动/双向"], tooltip = "上涨、下跌模式严格使用对应规则；自动/双向同时维护两套候选结构，并在有效突破后切换方向。", group = groupMid)
 startTime = input.time(timestamp("01 Jan 2020 00:00 +0000"), "趋势起始时间", group = groupMid)
 breakMode = input.string("影线", "突破依据", options = ["影线", "收盘价"], group = groupMid)
 showMidPoints = input.bool(true, "显示中期点", group = groupMid)
 showMidLines = input.bool(true, "显示中期结构线", group = groupMid)
+midContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "中期结构独立处理内包，避免与短期结构重复压缩。", group = groupMid)
 
 shortColor = color.new(color.teal, 15)
 midColor = color.rgb(194, 64, 55)
@@ -33,7 +35,7 @@ plotshape(showShortPoints and newLow ? pl : na, "短期低点", shape.triangleup
 
 // Each pair of alternating pivots defines a high/low range. An inner pair
 // does not contribute a turn to the displayed structure.
-addPoint(array<int> types, array<float> prices, array<int> times, array<line> segments, int pointType, float pointPrice, int pointTime, color stroke, int width, bool visible) =>
+addPoint(array<int> types, array<float> prices, array<int> times, array<line> segments, int pointType, float pointPrice, int pointTime, color stroke, int width, bool visible, string containmentMode) =>
     int count = array.size(types)
     if count > 0 and array.get(types, count - 1) == pointType
         float previous = array.get(prices, count - 1)
@@ -56,12 +58,18 @@ addPoint(array<int> types, array<float> prices, array<int> times, array<line> se
         array.push(prices, pointPrice)
         array.push(times, pointTime)
         count := array.size(types)
-        if count >= 4
+        if containmentMode != "关闭" and count >= 4
+            int outerFirstType = array.get(types, count - 4)
+            int outerSecondType = array.get(types, count - 3)
+            int innerFirstType = array.get(types, count - 2)
+            int innerSecondType = array.get(types, count - 1)
+            bool sameDirection = outerFirstType == innerFirstType and outerSecondType == innerSecondType
             float outerHigh = math.max(array.get(prices, count - 4), array.get(prices, count - 3))
             float outerLow = math.min(array.get(prices, count - 4), array.get(prices, count - 3))
             float innerHigh = math.max(array.get(prices, count - 2), array.get(prices, count - 1))
             float innerLow = math.min(array.get(prices, count - 2), array.get(prices, count - 1))
-            if innerHigh <= outerHigh and innerLow >= outerLow
+            bool inside = containmentMode == "严格内包" ? innerHigh < outerHigh and innerLow > outerLow : innerHigh <= outerHigh and innerLow >= outerLow
+            if sameDirection and inside
                 for i = 0 to 1
                     line removed = array.pop(segments)
                     if not na(removed)
@@ -82,7 +90,7 @@ var midSegments = array.new_line()
 
 // 原始孤立点标记保留；内包只从结构折线中合并。
 if newHigh or newLow
-    addPoint(shortTypes, shortPrices, shortTimes, shortSegments, newHigh ? 1 : -1, newHigh ? ph : pl, time[rightBars], shortColor, 1, showShortLines)
+    addPoint(shortTypes, shortPrices, shortTimes, shortSegments, newHigh ? 1 : -1, newHigh ? ph : pl, time[rightBars], shortColor, 1, showShortLines, shortContainment)
 
 // 中期确认使用已确认的短期点。突破只在确认 K 线及其后发生，
 // 避免将右侧确认期间的历史价格当作事先已知的信号。
@@ -114,12 +122,18 @@ var int pendingHighIndex = na
 var int pendingHighTime = na
 bool newMidHigh = false
 bool newMidLow = false
+bool autoConflict = false
+bool autoSwitchUp = false
+bool autoSwitchDown = false
+var int autoDirection = 0
 
 if inTrend
+    bool trackUpRules = trendMode != "下跌"
+    bool trackDownRules = trendMode != "上涨"
     if newLow and pointInTrend
         previousShortLow := pl
         previousShortLowIndex := bar_index - rightBars
-        if trend == "上涨" and ((not na(candidateHighIndex) and previousShortLowIndex > candidateHighIndex) or (not na(confirmedMidHighIndex) and previousShortLowIndex > confirmedMidHighIndex))
+        if trackUpRules and ((not na(candidateHighIndex) and previousShortLowIndex > candidateHighIndex) or (not na(confirmedMidHighIndex) and previousShortLowIndex > confirmedMidHighIndex))
             if na(pendingLow) or pl < pendingLow
                 pendingLow := pl
                 pendingLowIndex := previousShortLowIndex
@@ -127,29 +141,46 @@ if inTrend
     if newHigh and pointInTrend
         previousShortHigh := ph
         previousShortHighIndex := bar_index - rightBars
-        if trend == "下跌" and ((not na(candidateLowIndex) and previousShortHighIndex > candidateLowIndex) or (not na(confirmedMidLowIndex) and previousShortHighIndex > confirmedMidLowIndex))
+        if trackDownRules and ((not na(candidateLowIndex) and previousShortHighIndex > candidateLowIndex) or (not na(confirmedMidLowIndex) and previousShortHighIndex > confirmedMidLowIndex))
             if na(pendingHigh) or ph > pendingHigh
                 pendingHigh := ph
                 pendingHighIndex := previousShortHighIndex
                 pendingHighTime := time[rightBars]
 
-    if trend == "上涨" and newHigh and pointInTrend and not na(previousShortLow) and previousShortLowIndex < previousShortHighIndex
+    if trackUpRules and newHigh and pointInTrend and not na(previousShortLow) and previousShortLowIndex < previousShortHighIndex
         if na(candidateHigh) or ph > candidateHigh
             candidateHigh := ph
             candidateHighIndex := previousShortHighIndex
             candidateHighTime := time[rightBars]
             candidateHighBase := previousShortLow
-    if trend == "下跌" and newLow and pointInTrend and not na(previousShortHigh) and previousShortHighIndex < previousShortLowIndex
+    if trackDownRules and newLow and pointInTrend and not na(previousShortHigh) and previousShortHighIndex < previousShortLowIndex
         if na(candidateLow) or pl < candidateLow
             candidateLow := pl
             candidateLowIndex := previousShortLowIndex
             candidateLowTime := time[rightBars]
             candidateLowBase := previousShortHigh
 
-    bool midHighEvent = barstate.isconfirmed and trend == "上涨" and not na(candidateHighBase) and breakDown < candidateHighBase and bar_index > candidateHighIndex
-    bool midLowEvent = barstate.isconfirmed and trend == "下跌" and not na(candidateLowBase) and breakUp > candidateLowBase and bar_index > candidateLowIndex
-    bool recoveryUp = barstate.isconfirmed and trend == "上涨" and not na(confirmedMidHigh) and not na(pendingLow) and breakUp > confirmedMidHigh
-    bool recoveryDown = barstate.isconfirmed and trend == "下跌" and not na(confirmedMidLow) and not na(pendingHigh) and breakDown < confirmedMidLow
+    bool rawMidHighEvent = barstate.isconfirmed and trackUpRules and not na(candidateHighBase) and breakDown < candidateHighBase and bar_index > candidateHighIndex
+    bool rawMidLowEvent = barstate.isconfirmed and trackDownRules and not na(candidateLowBase) and breakUp > candidateLowBase and bar_index > candidateLowIndex
+    bool rawRecoveryUp = barstate.isconfirmed and trackUpRules and not na(confirmedMidHigh) and not na(pendingLow) and breakUp > confirmedMidHigh
+    bool rawRecoveryDown = barstate.isconfirmed and trackDownRules and not na(confirmedMidLow) and not na(pendingHigh) and breakDown < confirmedMidLow
+    bool upwardBreak = rawMidLowEvent or rawRecoveryUp
+    bool downwardBreak = rawMidHighEvent or rawRecoveryDown
+    autoConflict := trendMode == "自动/双向" and upwardBreak and downwardBreak
+    // A direct candidate break takes precedence over a recovery confirmation
+    // in the same direction, so one bar cannot emit the same point twice.
+    bool midHighEvent = rawMidHighEvent and not autoConflict
+    bool midLowEvent = rawMidLowEvent and not autoConflict
+    bool recoveryUp = rawRecoveryUp and not rawMidLowEvent and not autoConflict
+    bool recoveryDown = rawRecoveryDown and not rawMidHighEvent and not autoConflict
+
+    if trendMode == "自动/双向" and not autoConflict
+        if upwardBreak and autoDirection != 1
+            autoDirection := 1
+            autoSwitchUp := true
+        else if downwardBreak and autoDirection != -1
+            autoDirection := -1
+            autoSwitchDown := true
 
     if midHighEvent
         newMidHigh := true
@@ -161,7 +192,7 @@ if inTrend
             pendingLowTime := na
         if showMidPoints
             label.new(candidateHighTime, candidateHigh, "中高", xloc = xloc.bar_time, style = label.style_label_down, color = midColor, textcolor = color.white, size = size.tiny)
-        addPoint(midTypes, midPrices, midTimes, midSegments, 1, candidateHigh, candidateHighTime, midColor, 2, showMidLines)
+        addPoint(midTypes, midPrices, midTimes, midSegments, 1, candidateHigh, candidateHighTime, midColor, 2, showMidLines, midContainment)
         candidateHigh := na
         candidateHighBase := na
     else if recoveryUp
@@ -170,7 +201,7 @@ if inTrend
         confirmedMidLowIndex := pendingLowIndex
         if showMidPoints
             label.new(pendingLowTime, pendingLow, "中低", xloc = xloc.bar_time, style = label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
-        addPoint(midTypes, midPrices, midTimes, midSegments, -1, pendingLow, pendingLowTime, midColor, 2, showMidLines)
+        addPoint(midTypes, midPrices, midTimes, midSegments, -1, pendingLow, pendingLowTime, midColor, 2, showMidLines, midContainment)
         confirmedMidHigh := na
         confirmedMidHighIndex := na
         pendingLow := na
@@ -187,7 +218,7 @@ if inTrend
             pendingHighTime := na
         if showMidPoints
             label.new(candidateLowTime, candidateLow, "中低", xloc = xloc.bar_time, style = label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
-        addPoint(midTypes, midPrices, midTimes, midSegments, -1, candidateLow, candidateLowTime, midColor, 2, showMidLines)
+        addPoint(midTypes, midPrices, midTimes, midSegments, -1, candidateLow, candidateLowTime, midColor, 2, showMidLines, midContainment)
         candidateLow := na
         candidateLowBase := na
     else if recoveryDown
@@ -196,7 +227,7 @@ if inTrend
         confirmedMidHighIndex := pendingHighIndex
         if showMidPoints
             label.new(pendingHighTime, pendingHigh, "中高", xloc = xloc.bar_time, style = label.style_label_down, color = midColor, textcolor = color.white, size = size.tiny)
-        addPoint(midTypes, midPrices, midTimes, midSegments, 1, pendingHigh, pendingHighTime, midColor, 2, showMidLines)
+        addPoint(midTypes, midPrices, midTimes, midSegments, 1, pendingHigh, pendingHighTime, midColor, 2, showMidLines, midContainment)
         confirmedMidLow := na
         confirmedMidLowIndex := na
         pendingHigh := na
@@ -207,3 +238,9 @@ alertcondition(newHigh, "短期高点确认", "短期高点已确认")
 alertcondition(newLow, "短期低点确认", "短期低点已确认")
 alertcondition(newMidHigh, "中期高点确认", "中期高点已确认")
 alertcondition(newMidLow, "中期低点确认", "中期低点已确认")
+alertcondition(autoSwitchUp, "自动切换上涨", "中期结构自动切换为上涨")
+alertcondition(autoSwitchDown, "自动切换下跌", "中期结构自动切换为下跌")
+plotshape(autoSwitchUp, "自动上涨", shape.labelup, location.belowbar, color.new(color.green, 0), text = "涨", textcolor = color.white, size = size.tiny)
+plotshape(autoSwitchDown, "自动下跌", shape.labeldown, location.abovebar, color.new(color.red, 0), text = "跌", textcolor = color.white, size = size.tiny)
+plotshape(autoConflict, "双向突破冲突", shape.xcross, location.abovebar, color.orange, text = "冲突", textcolor = color.orange, size = size.tiny)
+plot(trendMode == "自动/双向" ? autoDirection : na, "自动方向（1 涨 / -1 跌 / 0 未确认）", display = display.data_window)
