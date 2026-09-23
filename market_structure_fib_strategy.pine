@@ -1,0 +1,212 @@
+//@version=6
+strategy("中期结构斐波那契回撤策略", overlay = true, pyramiding = 0, default_qty_type = strategy.percent_of_equity, default_qty_value = 10, commission_type = strategy.commission.percent, commission_value = 0.04, slippage = 2, process_orders_on_close = false)
+
+groupStructure = "结构确认"
+leftBars = input.int(1, "左侧确认 K 线数", minval = 1, maxval = 20, group = groupStructure)
+rightBars = input.int(1, "右侧确认 K 线数", minval = 1, maxval = 20, group = groupStructure)
+trendMode = input.string("自动/双向", "趋势模式", options = ["上涨", "下跌", "自动/双向"], group = groupStructure)
+startTime = input.time(timestamp("01 Jan 2020 00:00 +0000"), "趋势起始时间", group = groupStructure)
+breakMode = input.string("影线", "突破依据", options = ["影线", "收盘价"], group = groupStructure)
+
+groupTrade = "回撤交易"
+shallowRetracement = input.float(0.5, "回撤区间起点", minval = 0.01, maxval = 0.98, step = 0.001, group = groupTrade)
+deepRetracement = input.float(0.618, "回撤区间终点", minval = 0.02, maxval = 0.99, step = 0.001, group = groupTrade)
+stopBufferTicks = input.int(1, "结构止损缓冲（最小跳动）", minval = 0, maxval = 1000, group = groupTrade)
+showLevels = input.bool(true, "显示待交易回撤区间", group = groupTrade)
+
+if barstate.isfirst and shallowRetracement >= deepRetracement
+    runtime.error("回撤区间起点必须小于终点")
+
+ph = ta.pivothigh(high, leftBars, rightBars)
+pl = ta.pivotlow(low, leftBars, rightBars)
+leftHigh = ta.highest(high[rightBars + 1], leftBars)
+rightHigh = ta.highest(high, rightBars)
+leftLow = ta.lowest(low[rightBars + 1], leftBars)
+rightLow = ta.lowest(low, rightBars)
+strictHigh = not na(ph) and high[rightBars] > leftHigh and high[rightBars] > rightHigh
+strictLow = not na(pl) and low[rightBars] < leftLow and low[rightBars] < rightLow
+ambiguous = strictHigh and strictLow
+newHigh = barstate.isconfirmed and strictHigh and not ambiguous
+newLow = barstate.isconfirmed and strictLow and not ambiguous
+inTrend = time >= startTime
+pointInTrend = time[rightBars] >= startTime
+breakUp = breakMode == "影线" ? high : close
+breakDown = breakMode == "影线" ? low : close
+
+var float previousShortLow = na
+var int previousShortLowIndex = na
+var float previousShortHigh = na
+var int previousShortHighIndex = na
+var float candidateHigh = na
+var int candidateHighIndex = na
+var float candidateHighBase = na
+var float candidateLow = na
+var int candidateLowIndex = na
+var float candidateLowBase = na
+var float confirmedMidHigh = na
+var int confirmedMidHighIndex = na
+var float confirmedMidLow = na
+var int confirmedMidLowIndex = na
+var float pendingLow = na
+var int pendingLowIndex = na
+var float pendingHigh = na
+var int pendingHighIndex = na
+
+var float previousMidHigh = na
+var float lastMidHigh = na
+var int lastMidHighIndex = na
+var float previousMidLow = na
+var float lastMidLow = na
+var int lastMidLowIndex = na
+var float longAnchorLow = na
+var float longAnchorHigh = na
+var int longSetupBar = na
+var bool longUsed = true
+var float shortAnchorHigh = na
+var float shortAnchorLow = na
+var int shortSetupBar = na
+var bool shortUsed = true
+
+if inTrend
+    bool trackUpRules = trendMode != "下跌"
+    bool trackDownRules = trendMode != "上涨"
+
+    if newLow and pointInTrend
+        previousShortLow := pl
+        previousShortLowIndex := bar_index - rightBars
+        if trackUpRules and ((not na(candidateHighIndex) and previousShortLowIndex > candidateHighIndex) or (not na(confirmedMidHighIndex) and previousShortLowIndex > confirmedMidHighIndex))
+            if na(pendingLow) or pl < pendingLow
+                pendingLow := pl
+                pendingLowIndex := previousShortLowIndex
+    if newHigh and pointInTrend
+        previousShortHigh := ph
+        previousShortHighIndex := bar_index - rightBars
+        if trackDownRules and ((not na(candidateLowIndex) and previousShortHighIndex > candidateLowIndex) or (not na(confirmedMidLowIndex) and previousShortHighIndex > confirmedMidLowIndex))
+            if na(pendingHigh) or ph > pendingHigh
+                pendingHigh := ph
+                pendingHighIndex := previousShortHighIndex
+
+    if trackUpRules and newHigh and pointInTrend and not na(previousShortLow) and previousShortLowIndex < previousShortHighIndex
+        if na(candidateHigh) or ph > candidateHigh
+            candidateHigh := ph
+            candidateHighIndex := previousShortHighIndex
+            candidateHighBase := previousShortLow
+    if trackDownRules and newLow and pointInTrend and not na(previousShortHigh) and previousShortHighIndex < previousShortLowIndex
+        if na(candidateLow) or pl < candidateLow
+            candidateLow := pl
+            candidateLowIndex := previousShortLowIndex
+            candidateLowBase := previousShortHigh
+
+    bool rawMidHigh = barstate.isconfirmed and trackUpRules and not na(candidateHighBase) and breakDown < candidateHighBase and bar_index > candidateHighIndex
+    bool rawMidLow = barstate.isconfirmed and trackDownRules and not na(candidateLowBase) and breakUp > candidateLowBase and bar_index > candidateLowIndex
+    bool rawRecoveryUp = barstate.isconfirmed and trackUpRules and not na(confirmedMidHigh) and not na(pendingLow) and breakUp > confirmedMidHigh
+    bool rawRecoveryDown = barstate.isconfirmed and trackDownRules and not na(confirmedMidLow) and not na(pendingHigh) and breakDown < confirmedMidLow
+    bool conflict = trendMode == "自动/双向" and (rawMidLow or rawRecoveryUp) and (rawMidHigh or rawRecoveryDown)
+    bool midHighEvent = rawMidHigh and not conflict
+    bool midLowEvent = rawMidLow and not conflict
+    bool recoveryUp = rawRecoveryUp and not rawMidLow and not conflict
+    bool recoveryDown = rawRecoveryDown and not rawMidHigh and not conflict
+    float eventHighPrice = na
+    int eventHighIndex = na
+    float eventLowPrice = na
+    int eventLowIndex = na
+
+    if midHighEvent
+        eventHighPrice := candidateHigh
+        eventHighIndex := candidateHighIndex
+        confirmedMidHigh := candidateHigh
+        confirmedMidHighIndex := candidateHighIndex
+        if na(pendingLowIndex) or pendingLowIndex <= candidateHighIndex
+            pendingLow := na
+            pendingLowIndex := na
+        candidateHigh := na
+        candidateHighBase := na
+    else if recoveryUp
+        eventLowPrice := pendingLow
+        eventLowIndex := pendingLowIndex
+        confirmedMidLow := pendingLow
+        confirmedMidLowIndex := pendingLowIndex
+        confirmedMidHigh := na
+        confirmedMidHighIndex := na
+        pendingLow := na
+        pendingLowIndex := na
+
+    if midLowEvent
+        eventLowPrice := candidateLow
+        eventLowIndex := candidateLowIndex
+        confirmedMidLow := candidateLow
+        confirmedMidLowIndex := candidateLowIndex
+        if na(pendingHighIndex) or pendingHighIndex <= candidateLowIndex
+            pendingHigh := na
+            pendingHighIndex := na
+        candidateLow := na
+        candidateLowBase := na
+    else if recoveryDown
+        eventHighPrice := pendingHigh
+        eventHighIndex := pendingHighIndex
+        confirmedMidHigh := pendingHigh
+        confirmedMidHighIndex := pendingHighIndex
+        confirmedMidLow := na
+        confirmedMidLowIndex := na
+        pendingHigh := na
+        pendingHighIndex := na
+
+    // Ignore points confirmed late if an even newer point of the same kind is
+    // already known; an old pivot cannot change a previously placed order.
+    if not na(eventHighIndex) and (na(lastMidHighIndex) or eventHighIndex > lastMidHighIndex)
+        previousMidHigh := lastMidHigh
+        lastMidHigh := eventHighPrice
+        lastMidHighIndex := eventHighIndex
+        bool higherHigh = not na(previousMidHigh) and lastMidHigh > previousMidHigh
+        bool higherLow = not na(previousMidLow) and not na(lastMidLow) and lastMidLow > previousMidLow
+        bool upwardTrend = trendMode == "上涨" or (trendMode == "自动/双向" and higherHigh and higherLow)
+        if upwardTrend and not na(lastMidLowIndex) and lastMidLowIndex < eventHighIndex and lastMidLow < eventHighPrice
+            longAnchorLow := lastMidLow
+            longAnchorHigh := eventHighPrice
+            longSetupBar := bar_index
+            longUsed := false
+            shortUsed := true
+
+    if not na(eventLowIndex) and (na(lastMidLowIndex) or eventLowIndex > lastMidLowIndex)
+        previousMidLow := lastMidLow
+        lastMidLow := eventLowPrice
+        lastMidLowIndex := eventLowIndex
+        bool lowerLow = not na(previousMidLow) and lastMidLow < previousMidLow
+        bool lowerHigh = not na(previousMidHigh) and not na(lastMidHigh) and lastMidHigh < previousMidHigh
+        bool downwardTrend = trendMode == "下跌" or (trendMode == "自动/双向" and lowerLow and lowerHigh)
+        if downwardTrend and not na(lastMidHighIndex) and lastMidHighIndex < eventLowIndex and lastMidHigh > eventLowPrice
+            shortAnchorHigh := lastMidHigh
+            shortAnchorLow := eventLowPrice
+            shortSetupBar := bar_index
+            shortUsed := false
+            longUsed := true
+
+float stopBuffer = stopBufferTicks * syminfo.mintick
+if not longUsed and bar_index > longSetupBar and (low <= longAnchorLow - stopBuffer or high >= longAnchorHigh)
+    longUsed := true
+if not shortUsed and bar_index > shortSetupBar and (high >= shortAnchorHigh + stopBuffer or low <= shortAnchorLow)
+    shortUsed := true
+
+float longRange = longAnchorHigh - longAnchorLow
+float longZoneUpper = longAnchorHigh - longRange * shallowRetracement
+float longZoneLower = longAnchorHigh - longRange * deepRetracement
+float shortRange = shortAnchorHigh - shortAnchorLow
+float shortZoneLower = shortAnchorLow + shortRange * shallowRetracement
+float shortZoneUpper = shortAnchorLow + shortRange * deepRetracement
+
+bool longEntry = barstate.isconfirmed and inTrend and not longUsed and bar_index > longSetupBar and strategy.position_size == 0 and close >= longZoneLower and close <= longZoneUpper
+bool shortEntry = barstate.isconfirmed and inTrend and not shortUsed and bar_index > shortSetupBar and strategy.position_size == 0 and close >= shortZoneLower and close <= shortZoneUpper
+
+if longEntry
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", from_entry = "Long", stop = longAnchorLow - stopBuffer, limit = longAnchorHigh)
+    longUsed := true
+else if shortEntry
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", from_entry = "Short", stop = shortAnchorHigh + stopBuffer, limit = shortAnchorLow)
+    shortUsed := true
+
+plot(showLevels and not longUsed ? longZoneUpper : na, "多单 0.5", color = color.new(color.teal, 10), style = plot.style_linebr)
+plot(showLevels and not longUsed ? longZoneLower : na, "多单 0.618", color = color.new(color.teal, 45), style = plot.style_linebr)
+plot(showLevels and not shortUsed ? shortZoneLower : na, "空单 0.5", color = color.new(color.red, 10), style = plot.style_linebr)
+plot(showLevels and not shortUsed ? shortZoneUpper : na, "空单 0.618", color = color.new(color.red, 45), style = plot.style_linebr)
