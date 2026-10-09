@@ -1,5 +1,5 @@
 //@version=6
-strategy("中期结构斐波那契回撤策略", overlay = true, pyramiding = 0, default_qty_type = strategy.percent_of_equity, default_qty_value = 10, commission_type = strategy.commission.percent, commission_value = 0.04, slippage = 2, process_orders_on_close = false)
+strategy("中期结构斐波那契回撤策略", overlay = true, pyramiding = 0, max_lines_count = 500, default_qty_type = strategy.percent_of_equity, default_qty_value = 10, commission_type = strategy.commission.percent, commission_value = 0.04, slippage = 2, process_orders_on_close = false)
 
 groupStructure = "结构确认"
 leftBars = input.int(1, "左侧确认 K 线数", minval = 1, maxval = 20, group = groupStructure)
@@ -9,13 +9,26 @@ startTime = input.time(timestamp("01 Jan 2020 00:00 +0000"), "趋势起始时间
 breakMode = input.string("影线", "突破依据", options = ["影线", "收盘价"], group = groupStructure)
 
 groupTrade = "回撤交易"
-shallowRetracement = input.float(0.5, "回撤区间起点", minval = 0.01, maxval = 0.98, step = 0.001, group = groupTrade)
-deepRetracement = input.float(0.618, "回撤区间终点", minval = 0.02, maxval = 0.99, step = 0.001, group = groupTrade)
+strongRetracement = input.float(0.618, "强势挂单回撤位", minval = 0.01, maxval = 0.98, step = 0.001, group = groupTrade)
+normalRetracement = input.float(0.786, "普通挂单回撤位", minval = 0.02, maxval = 0.99, step = 0.001, group = groupTrade)
+strengthAtrLength = input.int(14, "强度 ATR 周期", minval = 1, maxval = 200, group = groupTrade)
+strongSwingAtr = input.float(3.0, "强势摆动最小 ATR 倍数", minval = 0.1, step = 0.1, group = groupTrade)
 stopBufferTicks = input.int(1, "结构止损缓冲（最小跳动）", minval = 0, maxval = 1000, group = groupTrade)
-showLevels = input.bool(true, "显示待交易回撤区间", group = groupTrade)
+showLevels = input.bool(true, "显示回撤/止盈止损辅助线", group = groupTrade)
 
-if barstate.isfirst and shallowRetracement >= deepRetracement
-    runtime.error("回撤区间起点必须小于终点")
+if barstate.isfirst and strongRetracement >= normalRetracement
+    runtime.error("强势回撤位必须小于普通回撤位")
+
+drawTradeLevels(array<line> activeLines, array<line> historyLines, float entryPrice, float stopPrice, float targetPrice, color entryColor) =>
+    array.clear(activeLines)
+    array.push(activeLines, line.new(bar_index, entryPrice, bar_index + 1, entryPrice, extend = extend.right, color = entryColor, style = line.style_dashed))
+    array.push(activeLines, line.new(bar_index, stopPrice, bar_index + 1, stopPrice, extend = extend.right, color = color.red, width = 2))
+    array.push(activeLines, line.new(bar_index, targetPrice, bar_index + 1, targetPrice, extend = extend.right, color = color.green, width = 2))
+    for levelLine in activeLines
+        array.push(historyLines, levelLine)
+    while array.size(historyLines) > 300
+        line.delete(array.shift(historyLines))
+    array.size(activeLines)
 
 ph = ta.pivothigh(high, leftBars, rightBars)
 pl = ta.pivotlow(low, leftBars, rightBars)
@@ -62,10 +75,48 @@ var float longAnchorLow = na
 var float longAnchorHigh = na
 var int longSetupBar = na
 var bool longUsed = true
+var float longLimit = na
 var float shortAnchorHigh = na
 var float shortAnchorLow = na
 var int shortSetupBar = na
 var bool shortUsed = true
+var float shortLimit = na
+var int orderSide = 0
+var float orderLimit = na
+var float orderStop = na
+var float orderTarget = na
+var int activeSide = 0
+var int activeClosedTrades = 0
+var float activeStop = na
+var float activeTarget = na
+var activeTradeLines = array.new_line()
+var tradeLineHistory = array.new_line()
+float strengthAtr = ta.atr(strengthAtrLength)
+bool longSetupReady = false
+bool shortSetupReady = false
+
+// Process fills before a newly confirmed structure can replace its pending order.
+bool filledOrder = orderSide != 0 and (strategy.position_size != 0 or strategy.closedtrades > activeClosedTrades)
+if filledOrder
+    activeSide := orderSide
+    activeStop := orderStop
+    activeTarget := orderTarget
+    float fillPrice = strategy.position_size != 0 ? strategy.position_avg_price : strategy.closedtrades.entry_price(strategy.closedtrades - 1)
+    if showLevels
+        drawTradeLevels(activeTradeLines, tradeLineHistory, fillPrice, activeStop, activeTarget, orderSide == 1 ? color.teal : color.orange)
+    if orderSide == 1
+        longUsed := true
+    else
+        shortUsed := true
+    orderSide := 0
+
+if activeSide != 0 and strategy.closedtrades > activeClosedTrades
+    for levelLine in activeTradeLines
+        line.set_x2(levelLine, bar_index + 1)
+        line.set_extend(levelLine, extend.none)
+    array.clear(activeTradeLines)
+    activeSide := 0
+    activeClosedTrades := strategy.closedtrades
 
 if inTrend
     bool trackUpRules = trendMode != "下跌"
@@ -166,6 +217,8 @@ if inTrend
             longSetupBar := bar_index
             longUsed := false
             shortUsed := true
+            longLimit := math.round_to_mintick(eventHighPrice - (eventHighPrice - lastMidLow) * (not na(strengthAtr) and strengthAtr > 0 and (eventHighPrice - lastMidLow) / strengthAtr >= strongSwingAtr ? strongRetracement : normalRetracement))
+            longSetupReady := true
 
     if not na(eventLowIndex) and (na(lastMidLowIndex) or eventLowIndex > lastMidLowIndex)
         previousMidLow := lastMidLow
@@ -180,33 +233,63 @@ if inTrend
             shortSetupBar := bar_index
             shortUsed := false
             longUsed := true
+            shortLimit := math.round_to_mintick(eventLowPrice + (lastMidHigh - eventLowPrice) * (not na(strengthAtr) and strengthAtr > 0 and (lastMidHigh - eventLowPrice) / strengthAtr >= strongSwingAtr ? strongRetracement : normalRetracement))
+            shortSetupReady := true
+
+if (longSetupReady or shortSetupReady) and orderSide != 0
+    if orderSide == 1
+        strategy.cancel("Long")
+        strategy.cancel("Long Exit")
+    else
+        strategy.cancel("Short")
+        strategy.cancel("Short Exit")
+    orderSide := 0
 
 float stopBuffer = stopBufferTicks * syminfo.mintick
-if not longUsed and bar_index > longSetupBar and (low <= longAnchorLow - stopBuffer or high >= longAnchorHigh)
+if not longUsed and (low <= longAnchorLow - stopBuffer or high >= longAnchorHigh)
     longUsed := true
-if not shortUsed and bar_index > shortSetupBar and (high >= shortAnchorHigh + stopBuffer or low <= shortAnchorLow)
+if not shortUsed and (high >= shortAnchorHigh + stopBuffer or low <= shortAnchorLow)
+    shortUsed := true
+if longSetupReady and (close <= longLimit or strategy.position_size != 0)
+    longUsed := true
+if shortSetupReady and (close >= shortLimit or strategy.position_size != 0)
     shortUsed := true
 
-float longRange = longAnchorHigh - longAnchorLow
-float longZoneUpper = longAnchorHigh - longRange * shallowRetracement
-float longZoneLower = longAnchorHigh - longRange * deepRetracement
-float shortRange = shortAnchorHigh - shortAnchorLow
-float shortZoneLower = shortAnchorLow + shortRange * shallowRetracement
-float shortZoneUpper = shortAnchorLow + shortRange * deepRetracement
+if orderSide == 1 and longUsed
+    strategy.cancel("Long")
+    strategy.cancel("Long Exit")
+    orderSide := 0
+if orderSide == -1 and shortUsed
+    strategy.cancel("Short")
+    strategy.cancel("Short Exit")
+    orderSide := 0
 
-bool longEntry = barstate.isconfirmed and inTrend and not longUsed and bar_index > longSetupBar and strategy.position_size == 0 and close >= longZoneLower and close <= longZoneUpper
-bool shortEntry = barstate.isconfirmed and inTrend and not shortUsed and bar_index > shortSetupBar and strategy.position_size == 0 and close >= shortZoneLower and close <= shortZoneUpper
+bool canPlaceLong = longSetupReady and not longUsed and strategy.position_size == 0 and activeSide == 0 and close > longLimit
+bool canPlaceShort = shortSetupReady and not shortUsed and strategy.position_size == 0 and activeSide == 0 and close < shortLimit
+if orderSide == 0 and canPlaceLong
+    orderSide := 1
+    orderLimit := longLimit
+    orderStop := longAnchorLow - stopBuffer
+    orderTarget := longAnchorHigh
+    activeClosedTrades := strategy.closedtrades
+    strategy.entry("Long", strategy.long, limit = orderLimit)
+    strategy.exit("Long Exit", from_entry = "Long", stop = orderStop, limit = orderTarget)
+else if orderSide == 0 and canPlaceShort
+    orderSide := -1
+    orderLimit := shortLimit
+    orderStop := shortAnchorHigh + stopBuffer
+    orderTarget := shortAnchorLow
+    activeClosedTrades := strategy.closedtrades
+    strategy.entry("Short", strategy.short, limit = orderLimit)
+    strategy.exit("Short Exit", from_entry = "Short", stop = orderStop, limit = orderTarget)
 
-if longEntry
-    strategy.entry("Long", strategy.long)
-    strategy.exit("Long Exit", from_entry = "Long", stop = longAnchorLow - stopBuffer, limit = longAnchorHigh)
-    longUsed := true
-else if shortEntry
-    strategy.entry("Short", strategy.short)
-    strategy.exit("Short Exit", from_entry = "Short", stop = shortAnchorHigh + stopBuffer, limit = shortAnchorLow)
-    shortUsed := true
-
-plot(showLevels and not longUsed ? longZoneUpper : na, "多单 0.5", color = color.new(color.teal, 10), style = plot.style_linebr)
-plot(showLevels and not longUsed ? longZoneLower : na, "多单 0.618", color = color.new(color.teal, 45), style = plot.style_linebr)
-plot(showLevels and not shortUsed ? shortZoneLower : na, "空单 0.5", color = color.new(color.red, 10), style = plot.style_linebr)
-plot(showLevels and not shortUsed ? shortZoneUpper : na, "空单 0.618", color = color.new(color.red, 45), style = plot.style_linebr)
+bool pendingLong = activeSide == 0 and strategy.position_size == 0 and not longUsed
+bool pendingShort = activeSide == 0 and strategy.position_size == 0 and not shortUsed
+plot(showLevels and pendingLong ? longLimit : na, "待成交多头限价", color = color.teal, style = plot.style_linebr)
+plot(showLevels and pendingLong ? longAnchorLow - stopBuffer : na, "待入场多单止损", color = color.red, style = plot.style_linebr)
+plot(showLevels and pendingLong ? longAnchorHigh : na, "待入场多单止盈", color = color.green, style = plot.style_linebr)
+plot(showLevels and pendingShort ? shortLimit : na, "待成交空头限价", color = color.orange, style = plot.style_linebr)
+plot(showLevels and pendingShort ? shortAnchorHigh + stopBuffer : na, "待入场空单止损", color = color.red, style = plot.style_linebr)
+plot(showLevels and pendingShort ? shortAnchorLow : na, "待入场空单止盈", color = color.green, style = plot.style_linebr)
+plotshape(longSetupReady and not longUsed, title = "多头候选", style = shape.circle, location = location.belowbar, color = color.teal, size = size.tiny, text = "多候选")
+plotshape(shortSetupReady and not shortUsed, title = "空头候选", style = shape.circle, location = location.abovebar, color = color.orange, size = size.tiny, text = "空候选")
