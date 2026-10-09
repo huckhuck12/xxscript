@@ -16,6 +16,11 @@ showMidPoints = input.bool(true, "显示中期点", group = groupMid)
 showMidLines = input.bool(true, "显示中期结构线", group = groupMid)
 midContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "中期结构独立处理内包，避免与短期结构重复压缩。", group = groupMid)
 
+groupFib = "中期斐波那契回撤"
+showMidFib = input.bool(true, "显示最近一段中期回撤位", group = groupFib)
+fibLongColor = input.color(color.teal, "多头回撤颜色", group = groupFib)
+fibShortColor = input.color(color.red, "空头回撤颜色", group = groupFib)
+
 shortColor = color.new(color.teal, 15)
 midColor = color.rgb(194, 64, 55)
 ph = ta.pivothigh(high, leftBars, rightBars)
@@ -111,6 +116,9 @@ var midEventTypes = array.new_int()
 var midEventPrices = array.new_float()
 var midEventTimes = array.new_int()
 var midLabels = array.new_label()
+var fibLines = array.new_line()
+var fibLabels = array.new_label()
+var fibRatios = array.from(0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0)
 
 // 原始孤立点标记保留；内包只从结构折线中合并。
 if newHigh or newLow
@@ -253,6 +261,12 @@ if inTrend
 // Labels are created only for pivots surviving same-type and containment
 // processing, so the chart and the medium structure line describe the same points.
 if barstate.islast
+    for fibLine in fibLines
+        line.delete(fibLine)
+    for fibLabel in fibLabels
+        label.delete(fibLabel)
+    array.clear(fibLines)
+    array.clear(fibLabels)
     for segment in midSegments
         if not na(segment)
             line.delete(segment)
@@ -271,6 +285,24 @@ if barstate.islast
             bool isHigh = array.get(midTypes, i) == 1
             label pointLabel = label.new(array.get(midTimes, i), array.get(midPrices, i), isHigh ? "中高" : "中低", xloc = xloc.bar_time, style = isHigh ? label.style_label_down : label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
             array.push(midLabels, pointLabel)
+
+    // Use the final two retained medium pivots, after containment processing.
+    // Retracement starts at the end of the swing: 0 = end, 1 = start.
+    int midCount = array.size(midTimes)
+    if showMidFib and midCount >= 2
+        float swingStart = array.get(midPrices, midCount - 2)
+        float swingEnd = array.get(midPrices, midCount - 1)
+        int swingEndTime = array.get(midTimes, midCount - 1)
+        if swingStart != swingEnd
+            bool longSwing = swingEnd > swingStart
+            color fibColor = longSwing ? fibLongColor : fibShortColor
+            string fibDirection = longSwing ? "多头回撤 " : "空头回撤 "
+            for ratio in fibRatios
+                float level = swingEnd + (swingStart - swingEnd) * ratio
+                line levelLine = line.new(swingEndTime, level, time, level, xloc = xloc.bar_time, extend = extend.right, color = color.new(fibColor, ratio == 0.5 or ratio == 0.618 ? 0 : 45), style = line.style_dashed)
+                label levelLabel = label.new(time, level, fibDirection + str.tostring(ratio, "0.###") + "  " + str.tostring(level, format.mintick), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(fibColor, 85), textcolor = fibColor, size = size.tiny)
+                array.push(fibLines, levelLine)
+                array.push(fibLabels, levelLabel)
 
 alertcondition(newHigh, "短期高点确认", "短期高点已确认")
 alertcondition(newLow, "短期低点确认", "短期低点已确认")
