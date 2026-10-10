@@ -17,9 +17,10 @@ showMidLines = input.bool(true, "显示中期结构线", group = groupMid)
 midContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "中期结构独立处理内包，避免与短期结构重复压缩。", group = groupMid)
 
 groupFib = "中期斐波那契回撤"
-showMidFib = input.bool(true, "显示最近一段中期回撤位", group = groupFib)
-fibLongColor = input.color(color.teal, "多头回撤颜色", group = groupFib)
-fibShortColor = input.color(color.red, "空头回撤颜色", group = groupFib)
+showMidFib = input.bool(true, "显示最近一段摆动参考位", group = groupFib)
+showTradeFib = input.bool(true, "显示顺势交易回撤位", group = groupFib)
+fibLongColor = input.color(color.teal, "顺势多头颜色", group = groupFib)
+fibShortColor = input.color(color.red, "顺势空头颜色", group = groupFib)
 
 shortColor = color.new(color.teal, 15)
 midColor = color.rgb(194, 64, 55)
@@ -119,6 +120,20 @@ var midLabels = array.new_label()
 var fibLines = array.new_line()
 var fibLabels = array.new_label()
 var fibRatios = array.from(0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0)
+var tradeFibLines = array.new_line()
+var tradeFibLabels = array.new_label()
+var tradeMidTypes = array.new_int()
+var tradeMidPrices = array.new_float()
+var tradeMidTimes = array.new_int()
+var tradeMidSegments = array.new_line()
+var tradeFibRatios = array.from(0.618, 0.786)
+var int tradeSide = 0
+var float tradeSwingStart = na
+var float tradeSwingEnd = na
+var int tradeSwingStartTime = na
+var int tradeSwingEndTime = na
+var int tradeConfirmedTime = na
+var int lastTradeSwingEndTime = na
 
 // 原始孤立点标记保留；内包只从结构折线中合并。
 if newHigh or newLow
@@ -258,6 +273,65 @@ if inTrend
         pendingHighIndex := na
         pendingHighTime := na
 
+// Rebuild only when a medium point is confirmed; never infer a trade setup
+// from the final chart's retrospectively redrawn structure.
+if newMidHigh or newMidLow
+    array.clear(tradeMidTypes)
+    array.clear(tradeMidPrices)
+    array.clear(tradeMidTimes)
+    array.clear(tradeMidSegments)
+    if array.size(midEventTimes) > 0
+        for i = 0 to array.size(midEventTimes) - 1
+            addPoint(tradeMidTypes, tradeMidPrices, tradeMidTimes, tradeMidSegments, array.get(midEventTypes, i), array.get(midEventPrices, i), array.get(midEventTimes, i), midColor, 2, false, midContainment)
+
+    float latestHigh = na
+    float previousHigh = na
+    float latestLow = na
+    float previousLow = na
+    int tradeMidCount = array.size(tradeMidTypes)
+    if tradeMidCount > 0
+        for i = 0 to tradeMidCount - 1
+            if array.get(tradeMidTypes, i) == 1
+                previousHigh := latestHigh
+                latestHigh := array.get(tradeMidPrices, i)
+            else
+                previousLow := latestLow
+                latestLow := array.get(tradeMidPrices, i)
+    int structureSide = not na(previousHigh) and not na(previousLow) and latestHigh > previousHigh and latestLow > previousLow ? 1 : not na(previousHigh) and not na(previousLow) and latestHigh < previousHigh and latestLow < previousLow ? -1 : 0
+    if (trendMode == "上涨" and structureSide == -1) or (trendMode == "下跌" and structureSide == 1)
+        structureSide := 0
+    if structureSide != tradeSide
+        tradeSide := 0
+    if tradeSide != 0
+        bool retainedSwing = false
+        if tradeMidCount >= 2
+            for i = 0 to tradeMidCount - 2
+                if array.get(tradeMidTimes, i) == tradeSwingStartTime and array.get(tradeMidTimes, i + 1) == tradeSwingEndTime and array.get(tradeMidPrices, i) == tradeSwingStart and array.get(tradeMidPrices, i + 1) == tradeSwingEnd
+                    retainedSwing := true
+        if not retainedSwing
+            tradeSide := 0
+
+    int swingPosition = na
+    if structureSide != 0 and tradeMidCount >= 2
+        for i = tradeMidCount - 2 to math.max(0, tradeMidCount - 3)
+            if na(swingPosition) and array.get(tradeMidTypes, i) == -structureSide and array.get(tradeMidTypes, i + 1) == structureSide
+                swingPosition := i
+    if not na(swingPosition)
+        int candidateEndTime = array.get(tradeMidTimes, swingPosition + 1)
+        if na(lastTradeSwingEndTime) or candidateEndTime > lastTradeSwingEndTime
+            tradeSide := structureSide
+            tradeSwingStart := array.get(tradeMidPrices, swingPosition)
+            tradeSwingEnd := array.get(tradeMidPrices, swingPosition + 1)
+            tradeSwingStartTime := array.get(tradeMidTimes, swingPosition)
+            tradeSwingEndTime := candidateEndTime
+            tradeConfirmedTime := time
+            lastTradeSwingEndTime := candidateEndTime
+
+if barstate.isconfirmed and tradeSide == 1 and low <= tradeSwingStart
+    tradeSide := 0
+if barstate.isconfirmed and tradeSide == -1 and high >= tradeSwingStart
+    tradeSide := 0
+
 // Labels are created only for pivots surviving same-type and containment
 // processing, so the chart and the medium structure line describe the same points.
 if barstate.islast
@@ -265,8 +339,14 @@ if barstate.islast
         line.delete(fibLine)
     for fibLabel in fibLabels
         label.delete(fibLabel)
+    for tradeLine in tradeFibLines
+        line.delete(tradeLine)
+    for tradeLabel in tradeFibLabels
+        label.delete(tradeLabel)
     array.clear(fibLines)
     array.clear(fibLabels)
+    array.clear(tradeFibLines)
+    array.clear(tradeFibLabels)
     for segment in midSegments
         if not na(segment)
             line.delete(segment)
@@ -295,14 +375,24 @@ if barstate.islast
         int swingEndTime = array.get(midTimes, midCount - 1)
         if swingStart != swingEnd
             bool longSwing = swingEnd > swingStart
-            color fibColor = longSwing ? fibLongColor : fibShortColor
-            string fibDirection = longSwing ? "多头回撤 " : "空头回撤 "
+            string fibDirection = longSwing ? "上行摆动 " : "下行摆动 "
+            bool sameTradeSwing = tradeSide != 0 and swingStart == tradeSwingStart and swingEnd == tradeSwingEnd
             for ratio in fibRatios
-                float level = swingEnd + (swingStart - swingEnd) * ratio
-                line levelLine = line.new(swingEndTime, level, time, level, xloc = xloc.bar_time, extend = extend.right, color = color.new(fibColor, ratio == 0.5 or ratio == 0.618 ? 0 : 45), style = line.style_dashed)
-                label levelLabel = label.new(time, level, fibDirection + str.tostring(ratio, "0.###") + "  " + str.tostring(level, format.mintick), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(fibColor, 85), textcolor = fibColor, size = size.tiny)
-                array.push(fibLines, levelLine)
-                array.push(fibLabels, levelLabel)
+                if not (showTradeFib and sameTradeSwing and (ratio == 0.618 or ratio == 0.786))
+                    float level = swingEnd + (swingStart - swingEnd) * ratio
+                    line levelLine = line.new(swingEndTime, level, time, level, xloc = xloc.bar_time, extend = extend.right, color = color.new(color.gray, 75), style = line.style_dotted)
+                    label levelLabel = label.new(time, level, fibDirection + str.tostring(ratio, "0.###") + "  " + str.tostring(level, format.mintick), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.gray, 90), textcolor = color.gray, size = size.tiny)
+                    array.push(fibLines, levelLine)
+                    array.push(fibLabels, levelLabel)
+    if showTradeFib and tradeSide != 0
+        color tradeColor = tradeSide == 1 ? fibLongColor : fibShortColor
+        string tradeDirection = tradeSide == 1 ? "顺势多 " : "顺势空 "
+        for ratio in tradeFibRatios
+            float level = tradeSwingEnd + (tradeSwingStart - tradeSwingEnd) * ratio
+            line levelLine = line.new(tradeConfirmedTime, level, time + 1, level, xloc = xloc.bar_time, extend = extend.right, color = tradeColor, width = 2)
+            label levelLabel = label.new(bar_index, level, tradeDirection + str.tostring(ratio, "0.###") + "  " + str.tostring(level, format.mintick), style = label.style_label_left, color = color.new(tradeColor, 85), textcolor = tradeColor, size = size.tiny)
+            array.push(tradeFibLines, levelLine)
+            array.push(tradeFibLabels, levelLabel)
 
 alertcondition(newHigh, "短期高点确认", "短期高点已确认")
 alertcondition(newLow, "短期低点确认", "短期低点已确认")
