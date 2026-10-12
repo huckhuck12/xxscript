@@ -88,6 +88,37 @@ function recentAlignedSwing(points, side) {
   return null;
 }
 
+function setupLevels(start, end, near, far) {
+  const prices = [near, far].map((ratio) => end + (start - end) * ratio);
+  return [Math.min(...prices), Math.max(...prices)];
+}
+
+function setupEvents(bars, { side, start, end, confirmedAt, shortPoint, shortPointTime, swingEndTime, confirmationBars = 3 }) {
+  const [bottom, top] = setupLevels(start, end, 0.5, 0.618);
+  let sweptAt = -1;
+  const signals = [];
+  for (let i = confirmedAt + 1; i < bars.length; i++) {
+    const bar = bars[i];
+    const previous = bars[i - 1];
+    if (side === 1 ? bar.low <= start : bar.high >= start) break;
+    if (sweptAt >= 0 && i - sweptAt > confirmationBars) sweptAt = -1;
+    const range = bar.high - bar.low;
+    const trend = range > 0 && (side === 1
+      ? bar.close > bar.open && bar.close > previous.close && (bar.close - bar.open) / range >= 0.5 && (bar.close - bar.low) / range >= 0.7
+      : bar.close < bar.open && bar.close < previous.close && (bar.open - bar.close) / range >= 0.5 && (bar.high - bar.close) / range >= 0.7);
+    if (sweptAt >= 0 && i > sweptAt && trend) {
+      signals.push(i);
+      break;
+    }
+    const touchesZone = bar.high >= bottom && bar.low <= top;
+    const sweep = side === 1
+      ? bar.low < shortPoint && bar.close > shortPoint
+      : bar.high > shortPoint && bar.close < shortPoint;
+    if (touchesZone && shortPointTime > swingEndTime && sweep) sweptAt = i;
+  }
+  return signals;
+}
+
 const highSeries = [10, 12, 11, 9];
 assert.equal(isStrictPivot(highSeries, 1, 1, 1, 1), true, "strict isolated high");
 assert.equal(isStrictPivot([10, 12, 12], 1, 1, 1, 1), false, "equal high is not isolated");
@@ -157,6 +188,26 @@ assert.equal(structureSide(falling), -1, "lower highs and lows qualify short dir
 assert.deepEqual(recentAlignedSwing(falling, -1), falling.slice(-2), "newest falling leg is selected");
 assert.deepEqual(recentAlignedSwing([...falling, { type: 1, price: 100, time: 50 }], -1), falling.slice(-2), "short swing survives an upward pullback");
 
+assert.deepEqual(setupLevels(80, 100, 0.5, 0.618), [87.64, 90], "long retracement zone uses the confirmed swing");
+assert.deepEqual(setupLevels(120, 100, 0.5, 0.618), [110, 112.36], "short retracement zone mirrors the long zone");
+const longBars = [
+  { open: 98, high: 100, low: 96, close: 99 },
+  { open: 94, high: 95, low: 89, close: 93 },
+  { open: 90, high: 92, low: 87, close: 90.5 },
+  { open: 90.4, high: 94, low: 90, close: 93.5 },
+];
+assert.deepEqual(setupEvents(longBars, { side: 1, start: 80, end: 100, confirmedAt: 0, shortPoint: 88, shortPointTime: 2, swingEndTime: 1 }), [3], "sweep and later trend close produce one long candidate");
+assert.deepEqual(setupEvents(longBars, { side: 1, start: 80, end: 100, confirmedAt: 2, shortPoint: 88, shortPointTime: 2, swingEndTime: 1 }), [], "historical sweep before swing confirmation is not tradable");
+assert.deepEqual(setupEvents(longBars, { side: 1, start: 80, end: 100, confirmedAt: 0, shortPoint: 88, shortPointTime: 0, swingEndTime: 1 }), [], "old short pivot is not a valid new sweep reference");
+const shortBars = [
+  { open: 102, high: 104, low: 100, close: 101 },
+  { open: 107, high: 111, low: 106, close: 108 },
+  { open: 110, high: 113, low: 108, close: 109.5 },
+  { open: 109.6, high: 110, low: 106, close: 106.5 },
+];
+assert.deepEqual(setupEvents(shortBars, { side: -1, start: 120, end: 100, confirmedAt: 0, shortPoint: 112, shortPointTime: 2, swingEndTime: 1 }), [3], "short setup mirrors the long sequence");
+assert.deepEqual(setupEvents([...longBars.slice(0, 3), longBars[1], longBars[1], longBars[3]], { side: 1, start: 80, end: 100, confirmedAt: 0, shortPoint: 88, shortPointTime: 2, swingEndTime: 1, confirmationBars: 2 }), [], "late trend candle cannot confirm an expired sweep");
+
 const pine = readFileSync(new URL("../market_structure.pine", import.meta.url), "utf8");
 assert.match(pine, /high\[rightBars\] > leftHigh and high\[rightBars\] > rightHigh/, "Pine uses strict high comparison");
 assert.match(pine, /low\[rightBars\] < leftLow and low\[rightBars\] < rightLow/, "Pine uses strict low comparison");
@@ -174,5 +225,9 @@ assert.match(pine, /line\.new\(tradeConfirmedTime, level, time \+ 1, level, xloc
 assert.match(pine, /tradeSide == 1 and low <= tradeSwingStart/, "long reference expires at its structure low");
 assert.match(pine, /tradeSide == -1 and high >= tradeSwingStart/, "short reference expires at its structure high");
 assert.match(pine, /if not retainedSwing\s+tradeSide := 0/, "removed anchors invalidate the reference");
+assert.match(pine, /float sweepRefLow = previousShortLow/, "sweep uses the short point known before the current bar");
+assert.match(pine, /bar_index > tradeConfirmedBar/, "setup waits until the medium swing is confirmed");
+assert.match(pine, /bar_index > pendingSweepBar/, "trend candle follows, rather than coincides with, the sweep");
+assert.match(pine, /signaledSwingBar := tradeConfirmedBar/, "a confirmed swing signals at most once");
 
 console.log("market_structure: deterministic checks passed");

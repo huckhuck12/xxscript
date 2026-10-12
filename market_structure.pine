@@ -1,5 +1,5 @@
 //@version=6
-indicator("短期 / 中期市场结构", overlay = true, max_lines_count = 500, max_labels_count = 500)
+indicator("短期 / 中期市场结构", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 150, max_bars_back = 100)
 
 groupShort = "短期结构"
 leftBars = input.int(1, "左侧确认 K 线数", minval = 1, maxval = 20, group = groupShort)
@@ -21,6 +21,28 @@ showMidFib = input.bool(true, "显示最近一段摆动参考位", group = group
 showTradeFib = input.bool(true, "显示顺势交易回撤位", group = groupFib)
 fibLongColor = input.color(color.teal, "顺势多头颜色", group = groupFib)
 fibShortColor = input.color(color.red, "顺势空头颜色", group = groupFib)
+
+groupSetup = "回撤扫荡确认"
+showSetupZone = input.bool(true, "显示候选回撤区", group = groupSetup)
+showSetupSignals = input.bool(true, "显示候选信号", group = groupSetup)
+setupFibNear = input.float(0.5, "回撤区起点", minval = 0.0, maxval = 1.0, step = 0.001, group = groupSetup)
+setupFibFar = input.float(0.618, "回撤区终点", minval = 0.0, maxval = 1.0, step = 0.001, group = groupSetup)
+requireNewShortPoint = input.bool(true, "只扫摆动终点后的短期点", group = groupSetup)
+minSweepTicks = input.int(1, "最小刺破跳动数", minval = 1, maxval = 100, group = groupSetup)
+minReclaimTicks = input.int(1, "最小收回跳动数", minval = 1, maxval = 100, group = groupSetup)
+confirmationBars = input.int(3, "扫荡后确认期限（根）", minval = 1, maxval = 20, group = groupSetup)
+minBodyFraction = input.float(0.5, "趋势 K 线最小实体占比", minval = 0.0, maxval = 1.0, step = 0.05, group = groupSetup)
+minClosePosition = input.float(0.7, "趋势 K 线收盘位置", minval = 0.5, maxval = 1.0, step = 0.05, tooltip = "多头收在 K 线区间的上部，空头镜像；还要求收盘价比前一根向交易方向推进。", group = groupSetup)
+minCloseMoveAtr = input.float(0.0, "最小收盘推进（ATR 倍）", minval = 0.0, maxval = 5.0, step = 0.05, group = groupSetup)
+trendAtrLength = input.int(14, "推进 ATR 周期", minval = 1, maxval = 100, group = groupSetup)
+
+groupBreakZones = "结构突破候选区"
+showObCandidates = input.bool(false, "显示突破前反向 K 线区域", group = groupBreakZones)
+obLookback = input.int(10, "反向 K 线回看根数", minval = 1, maxval = 50, group = groupBreakZones)
+showFvgCandidates = input.bool(false, "显示三 K 线缺口", group = groupBreakZones)
+fvgLookback = input.int(3, "缺口回看根数", minval = 1, maxval = 10, group = groupBreakZones)
+minFvgTicks = input.int(1, "缺口最小跳动数", minval = 1, maxval = 100, group = groupBreakZones)
+maxCandidateZones = input.int(20, "每类最多保留区域数", minval = 1, maxval = 50, group = groupBreakZones)
 
 shortColor = color.new(color.teal, 15)
 midColor = color.rgb(194, 64, 55)
@@ -105,6 +127,13 @@ recordMidPoint(array<int> types, array<float> prices, array<int> times, int poin
         array.shift(times)
     array.size(times)
 
+addCandidateZone(array<box> zones, int leftTime, float zoneTop, int rightTime, float zoneBottom, color zoneColor, int limit) =>
+    box candidate = box.new(leftTime, zoneTop, rightTime, zoneBottom, xloc = xloc.bar_time, extend = extend.right, border_color = zoneColor, bgcolor = color.new(zoneColor, 88))
+    array.push(zones, candidate)
+    if array.size(zones) > limit
+        box.delete(array.shift(zones))
+    array.size(zones)
+
 var shortTypes = array.new_int()
 var shortPrices = array.new_float()
 var shortTimes = array.new_int()
@@ -134,6 +163,16 @@ var int tradeSwingStartTime = na
 var int tradeSwingEndTime = na
 var int tradeConfirmedTime = na
 var int lastTradeSwingEndTime = na
+var int tradeConfirmedBar = na
+var int previousShortLowTime = na
+var int previousShortHighTime = na
+var int pendingSweepSide = 0
+var int pendingSweepBar = na
+var int setupSwingBar = na
+var int signaledSwingBar = na
+var obZones = array.new_box()
+var fvgZones = array.new_box()
+var box setupZone = na
 
 // 原始孤立点标记保留；内包只从结构折线中合并。
 if newHigh or newLow
@@ -172,7 +211,13 @@ bool newMidLow = false
 bool autoConflict = false
 bool autoSwitchUp = false
 bool autoSwitchDown = false
+bool midBreakUp = false
+bool midBreakDown = false
 var int autoDirection = 0
+float sweepRefLow = previousShortLow
+float sweepRefHigh = previousShortHigh
+int sweepRefLowTime = previousShortLowTime
+int sweepRefHighTime = previousShortHighTime
 
 if inTrend
     bool trackUpRules = trendMode != "下跌"
@@ -180,6 +225,7 @@ if inTrend
     if newLow and pointInTrend
         previousShortLow := pl
         previousShortLowIndex := bar_index - rightBars
+        previousShortLowTime := time[rightBars]
         if trackUpRules and ((not na(candidateHighIndex) and previousShortLowIndex > candidateHighIndex) or (not na(confirmedMidHighIndex) and previousShortLowIndex > confirmedMidHighIndex))
             if na(pendingLow) or pl < pendingLow
                 pendingLow := pl
@@ -188,6 +234,7 @@ if inTrend
     if newHigh and pointInTrend
         previousShortHigh := ph
         previousShortHighIndex := bar_index - rightBars
+        previousShortHighTime := time[rightBars]
         if trackDownRules and ((not na(candidateLowIndex) and previousShortHighIndex > candidateLowIndex) or (not na(confirmedMidLowIndex) and previousShortHighIndex > confirmedMidLowIndex))
             if na(pendingHigh) or ph > pendingHigh
                 pendingHigh := ph
@@ -220,6 +267,8 @@ if inTrend
     bool midLowEvent = rawMidLowEvent and not autoConflict
     bool recoveryUp = rawRecoveryUp and not rawMidLowEvent and not autoConflict
     bool recoveryDown = rawRecoveryDown and not rawMidHighEvent and not autoConflict
+    midBreakUp := recoveryUp
+    midBreakDown := recoveryDown
 
     if trendMode == "自动/双向" and not autoConflict
         if upwardBreak and autoDirection != 1
@@ -325,12 +374,99 @@ if newMidHigh or newMidLow
             tradeSwingStartTime := array.get(tradeMidTimes, swingPosition)
             tradeSwingEndTime := candidateEndTime
             tradeConfirmedTime := time
+            tradeConfirmedBar := bar_index
             lastTradeSwingEndTime := candidateEndTime
 
 if barstate.isconfirmed and tradeSide == 1 and low <= tradeSwingStart
     tradeSide := 0
 if barstate.isconfirmed and tradeSide == -1 and high >= tradeSwingStart
     tradeSide := 0
+
+float fibNear = math.min(setupFibNear, setupFibFar)
+float fibFar = math.max(setupFibNear, setupFibFar)
+float setupNearPrice = tradeSwingEnd + (tradeSwingStart - tradeSwingEnd) * fibNear
+float setupFarPrice = tradeSwingEnd + (tradeSwingStart - tradeSwingEnd) * fibFar
+float setupTop = math.max(setupNearPrice, setupFarPrice)
+float setupBottom = math.min(setupNearPrice, setupFarPrice)
+bool setupActive = tradeSide != 0 and not na(tradeConfirmedBar)
+if na(setupSwingBar) or setupSwingBar != tradeConfirmedBar
+    setupSwingBar := tradeConfirmedBar
+    pendingSweepSide := 0
+    pendingSweepBar := na
+if not setupActive
+    pendingSweepSide := 0
+    pendingSweepBar := na
+
+if showSetupZone and setupActive
+    color zoneColor = tradeSide == 1 ? fibLongColor : fibShortColor
+    if na(setupZone)
+        setupZone := box.new(tradeConfirmedTime, setupTop, time, setupBottom, xloc = xloc.bar_time, extend = extend.right, border_color = color.new(zoneColor, 50), bgcolor = color.new(zoneColor, 92))
+    else
+        box.set_left(setupZone, tradeConfirmedTime)
+        box.set_right(setupZone, time)
+        box.set_top(setupZone, setupTop)
+        box.set_bottom(setupZone, setupBottom)
+        box.set_border_color(setupZone, color.new(zoneColor, 50))
+        box.set_bgcolor(setupZone, color.new(zoneColor, 92))
+else if not na(setupZone)
+    box.delete(setupZone)
+    setupZone := na
+
+bool longSetupSignal = false
+bool shortSetupSignal = false
+float candleRange = high - low
+float candleBody = math.abs(close - open)
+float closeAtr = ta.atr(trendAtrLength)
+bool bullishTrendCandle = candleRange > 0 and close > open and close > close[1] and candleBody / candleRange >= minBodyFraction and (close - low) / candleRange >= minClosePosition and close - close[1] >= closeAtr * minCloseMoveAtr
+bool bearishTrendCandle = candleRange > 0 and close < open and close < close[1] and candleBody / candleRange >= minBodyFraction and (high - close) / candleRange >= minClosePosition and close[1] - close >= closeAtr * minCloseMoveAtr
+if barstate.isconfirmed and setupActive and bar_index > tradeConfirmedBar and (na(signaledSwingBar) or signaledSwingBar != tradeConfirmedBar)
+    if not na(pendingSweepBar) and bar_index - pendingSweepBar > confirmationBars
+        pendingSweepSide := 0
+        pendingSweepBar := na
+    if pendingSweepSide == 1 and bar_index > pendingSweepBar and bullishTrendCandle and tradeSide == 1
+        longSetupSignal := true
+    if pendingSweepSide == -1 and bar_index > pendingSweepBar and bearishTrendCandle and tradeSide == -1
+        shortSetupSignal := true
+    if longSetupSignal or shortSetupSignal
+        signaledSwingBar := tradeConfirmedBar
+        pendingSweepSide := 0
+        pendingSweepBar := na
+    else
+        bool touchesZone = high >= setupBottom and low <= setupTop
+        bool validLow = not na(sweepRefLow) and (not requireNewShortPoint or sweepRefLowTime > tradeSwingEndTime)
+        bool validHigh = not na(sweepRefHigh) and (not requireNewShortPoint or sweepRefHighTime > tradeSwingEndTime)
+        if tradeSide == 1 and touchesZone and validLow and sweepRefLow - low >= minSweepTicks * syminfo.mintick and close - sweepRefLow >= minReclaimTicks * syminfo.mintick
+            pendingSweepSide := 1
+            pendingSweepBar := bar_index
+        if tradeSide == -1 and touchesZone and validHigh and high - sweepRefHigh >= minSweepTicks * syminfo.mintick and sweepRefHigh - close >= minReclaimTicks * syminfo.mintick
+            pendingSweepSide := -1
+            pendingSweepBar := bar_index
+
+// These are observable candidates around a confirmed medium-level break,
+// not evidence that institutional orders were placed at either zone.
+if midBreakUp or midBreakDown
+    int breakSide = midBreakUp ? 1 : -1
+    if showObCandidates
+        int obOffset = na
+        for i = 1 to obLookback
+            if na(obOffset) and not na(open[i]) and (breakSide == 1 ? close[i] < open[i] : close[i] > open[i])
+                obOffset := i
+        if not na(obOffset)
+            addCandidateZone(obZones, time[obOffset], high[obOffset], time, low[obOffset], breakSide == 1 ? fibLongColor : fibShortColor, maxCandidateZones)
+    if showFvgCandidates
+        int fvgOffset = na
+        for i = 0 to fvgLookback - 1
+            bool gapFound = breakSide == 1 ? low[i] - high[i + 2] >= minFvgTicks * syminfo.mintick : low[i + 2] - high[i] >= minFvgTicks * syminfo.mintick
+            if gapFound and i > 0
+                for j = 0 to i - 1
+                    if breakSide == 1 ? low[j] <= high[i + 2] : high[j] >= low[i + 2]
+                        gapFound := false
+            if na(fvgOffset) and gapFound
+                fvgOffset := i
+        if not na(fvgOffset)
+            float fvgTop = breakSide == 1 ? low[fvgOffset] : low[fvgOffset + 2]
+            float fvgBottom = breakSide == 1 ? high[fvgOffset + 2] : high[fvgOffset]
+            addCandidateZone(fvgZones, time[fvgOffset + 2], fvgTop, time, fvgBottom, breakSide == 1 ? color.lime : color.orange, maxCandidateZones)
 
 // Labels are created only for pivots surviving same-type and containment
 // processing, so the chart and the medium structure line describe the same points.
@@ -400,6 +536,10 @@ alertcondition(newMidHigh, "中期高点确认", "中期高点已确认")
 alertcondition(newMidLow, "中期低点确认", "中期低点已确认")
 alertcondition(autoSwitchUp, "自动切换上涨", "中期结构自动切换为上涨")
 alertcondition(autoSwitchDown, "自动切换下跌", "中期结构自动切换为下跌")
+alertcondition(longSetupSignal, "回撤扫荡多头候选", "回撤区扫荡后出现多头趋势 K 线")
+alertcondition(shortSetupSignal, "回撤扫荡空头候选", "回撤区扫荡后出现空头趋势 K 线")
+plotshape(showSetupSignals and longSetupSignal, "多头候选", shape.labelup, location.belowbar, fibLongColor, text = "候选多", textcolor = color.white, size = size.tiny)
+plotshape(showSetupSignals and shortSetupSignal, "空头候选", shape.labeldown, location.abovebar, fibShortColor, text = "候选空", textcolor = color.white, size = size.tiny)
 plotshape(autoSwitchUp, "自动上涨", shape.labelup, location.belowbar, color.new(color.green, 0), text = "涨", textcolor = color.white, size = size.tiny)
 plotshape(autoSwitchDown, "自动下跌", shape.labeldown, location.abovebar, color.new(color.red, 0), text = "跌", textcolor = color.white, size = size.tiny)
 plotshape(autoConflict, "双向突破冲突", shape.xcross, location.abovebar, color.orange, text = "冲突", textcolor = color.orange, size = size.tiny)
