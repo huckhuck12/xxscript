@@ -4,7 +4,7 @@ indicator("短期 / 中期市场结构", overlay = true, max_lines_count = 500, 
 groupShort = "短期结构"
 leftBars = input.int(1, "左侧确认 K 线数", minval = 1, maxval = 20, tooltip = "孤立高点必须高于左侧这些 K 线；孤立低点必须低于它们。", group = groupShort)
 rightBars = input.int(1, "右侧确认 K 线数", minval = 1, maxval = 20, tooltip = "短期点要等右侧这些 K 线收完才确认；图上标记会回绘到极值 K 线。", group = groupShort)
-showShortPoints = input.bool(true, "显示短期点", tooltip = "显示原始孤立高低点；它们不一定都保留在合并后的短期结构线上。", group = groupShort)
+showShortPoints = input.bool(false, "显示短期点", tooltip = "显示原始孤立高低点；它们不一定都保留在合并后的短期结构线上。默认关闭以突出当前待扫点。", group = groupShort)
 showShortLines = input.bool(true, "显示短期结构线", tooltip = "连接处理连续同类点与内包之后的短期高低点。", group = groupShort)
 shortContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "内包指后一个高低区间落在前一个区间内。严格模式不允许碰边，含边界模式允许相等；这里只整理短期折线。", group = groupShort)
 
@@ -17,13 +17,17 @@ showMidLines = input.bool(true, "显示中期结构线", tooltip = "连接最终
 midContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "内包是后一个高低区间落在前一个区间之内。这里只整理中期折线，不改变原始短期点。", group = groupMid)
 
 groupFib = "中期斐波那契回撤"
-showMidFib = input.bool(true, "显示最近一段摆动参考位", tooltip = "灰色虚线按最后一段中期折线绘制；0 是摆动终点，1 是起点，只表示结构参考，不表示做多或做空。", group = groupFib)
-showTradeFib = input.bool(true, "显示顺势交易回撤位", tooltip = "仅在中期高低点同向抬高或降低后，显示该顺势摆动的 0.618、0.786 参考位；不自动下单。", group = groupFib)
+showMidFib = input.bool(false, "显示最近一段摆动参考位", tooltip = "灰色虚线按最后一段中期折线绘制；0 是摆动终点，1 是起点，只表示结构参考，不表示做多或做空。默认关闭以减少重叠。", group = groupFib)
+showTradeFib = input.bool(false, "显示顺势交易回撤位", tooltip = "显示已确认中期顺势摆动的 0.618、0.786 参考线。与下方候选回撤区通常二选一显示，避免 0.618 附近重叠；关闭此线不影响回撤扫荡信号。", group = groupFib)
 fibLongColor = input.color(color.teal, "顺势多头颜色", group = groupFib)
 fibShortColor = input.color(color.red, "顺势空头颜色", group = groupFib)
 
 groupSetup = "回撤扫荡确认"
-showSetupZone = input.bool(true, "显示候选回撤区", tooltip = "已确认顺势摆动的价格回撤范围；发出一次信号、结构失效或超过等待期限后收起。", group = groupSetup)
+showSetupZone = input.bool(true, "显示候选回撤区", tooltip = "仅以已确认的中期顺势摆动定回撤区。按下方设置可在触区后顺势离开时结束机会。与上方顺势交易回撤线通常二选一显示；关闭此框不停止信号计算。", group = groupSetup)
+showSetupInvalidation = input.bool(true, "显示摆动失效位", tooltip = "细线标出当前顺势摆动的起点；价格触及后，该摆动的回撤机会失效。", group = groupSetup)
+showSweepTarget = input.bool(true, "显示待扫短期点", tooltip = "短虚线标出当前已确认、可用于扫荡判断的最近短期低点或高点；随新短期点更新。", group = groupSetup)
+retireAfterMissedTouch = input.bool(true, "触区后顺势离开即结束", tooltip = "回撤区曾被影线或实体触及后，若收盘顺势离开区域且没有等待确认的扫荡，就结束本次候选机会。关闭可允许之后再次回到区域。", group = groupSetup)
+keepExpiredSetupZones = input.bool(false, "保留已结束回撤区供复盘", tooltip = "关闭：回撤区结束后直接删除。开启：停止向右延伸并变灰，仅保留最近 20 个历史回撤区。", group = groupSetup)
 showSetupSignals = input.bool(true, "显示候选信号", tooltip = "先在回撤区扫短期点并收回，再由后续趋势 K 线确认。标记是观察信号，不是成交记录。", group = groupSetup)
 setupFibNear = input.float(0.5, "回撤区起点", minval = 0.0, maxval = 1.0, step = 0.001, tooltip = "从摆动终点向起点回撤的比例；0 是终点，1 是起点。两个端点输入顺序可互换。", group = groupSetup)
 setupFibFar = input.float(0.618, "回撤区终点", minval = 0.0, maxval = 1.0, step = 0.001, tooltip = "候选扫荡必须触及两条回撤线之间的价格范围；不是自动挂单价。", group = groupSetup)
@@ -40,7 +44,8 @@ trendAtrLength = input.int(14, "推进 ATR 周期", minval = 1, maxval = 100, to
 groupBreakZones = "结构突破候选区"
 showObCandidates = input.bool(false, "显示突破前反向 K 线区域", tooltip = "OB 候选：中期恢复突破前最近的反向 K 线高低价区间。只是图形线索，不证明存在机构订单。", group = groupBreakZones)
 obLookback = input.int(10, "反向 K 线回看根数", minval = 1, maxval = 50, tooltip = "从突破 K 线向前最多查找多少根，取最近一根反向 K 线作为 OB 候选来源。", group = groupBreakZones)
-showFvgCandidates = input.bool(false, "显示三 K 线缺口", tooltip = "FVG 候选：三根 K 线中，第一根与第三根的高低范围没有重叠形成的价格区间；不等于所有失衡。", group = groupBreakZones)
+showFvgCandidates = input.bool(false, "显示三 K 线缺口", tooltip = "FVG 候选：只在中期恢复突破附近查找第一根与第三根 K 线高低范围不重叠的缺口；不对每个短期点单独画区，也不等于所有失衡。", group = groupBreakZones)
+onlyOverlappingBreakZones = input.bool(true, "只显示与当前回撤区重合的同向区域", tooltip = "开启时，仅显示与当前有效中期回撤区价格重叠、方向一致的 OB/FVG；其他区域仍按原规则跟踪失效，但暂时隐藏。关闭可查看全部活跃区域。", group = groupBreakZones)
 fvgLookback = input.int(3, "缺口回看根数", minval = 1, maxval = 10, tooltip = "突破时从当前 K 线向前查找最近几组三 K 线缺口；已按所选失效口径回补的缺口不标。", group = groupBreakZones)
 minFvgTicks = input.int(1, "缺口最小跳动数", minval = 1, maxval = 100, tooltip = "三 K 线缺口至少宽多少个品种最小价格跳动。", group = groupBreakZones)
 obInvalidMode = input.string("收盘价", "反向 K 线区失效依据", options = ["影线", "收盘价"], tooltip = "多头 OB 候选以区域下边界为远端，空头以上边界为远端。影线模式触及即失效；收盘价模式要求收在远端外。", group = groupBreakZones)
@@ -134,14 +139,16 @@ recordMidPoint(array<int> types, array<float> prices, array<int> times, int poin
         array.shift(times)
     array.size(times)
 
-retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, array<box> history, int position, bool keepHistory, int historyLimit, int endTime) =>
+retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int position, bool keepHistory, int historyLimit, int endTime) =>
     box candidate = array.remove(zones, position)
     array.remove(sides, position)
     array.remove(bornBars, position)
-    if keepHistory
+    bool wasVisible = array.remove(seen, position)
+    if keepHistory and wasVisible
         box.set_right(candidate, endTime)
         box.set_border_color(candidate, color.new(color.gray, 82))
         box.set_bgcolor(candidate, color.new(color.gray, 96))
+        box.set_text_color(candidate, color.gray)
         array.push(history, candidate)
         if array.size(history) > historyLimit
             box.delete(array.shift(history))
@@ -149,16 +156,24 @@ retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, arr
         box.delete(candidate)
     array.size(zones)
 
-addCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, array<box> history, int leftTime, float zoneTop, int rightTime, float zoneBottom, color zoneColor, int side, int activeLimit, bool keepHistory, int historyLimit) =>
-    box candidate = box.new(leftTime, zoneTop, rightTime, zoneBottom, xloc = xloc.bar_time, border_color = color.new(zoneColor, 45), bgcolor = color.new(zoneColor, 92))
+styleCandidateZone(box candidate, color zoneColor, bool visible) =>
+    box.set_border_color(candidate, color.new(zoneColor, visible ? 45 : 100))
+    box.set_bgcolor(candidate, color.new(zoneColor, visible ? 92 : 100))
+    box.set_text_color(candidate, color.new(color.black, visible ? 0 : 100))
+    visible
+
+addCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int leftTime, float zoneTop, int rightTime, float zoneBottom, color zoneColor, string zoneName, int side, int activeLimit, bool keepHistory, int historyLimit, bool visible) =>
+    box candidate = box.new(leftTime, zoneTop, rightTime, zoneBottom, xloc = xloc.bar_time, border_color = color.new(zoneColor, 45), bgcolor = color.new(zoneColor, 92), text = zoneName, text_color = color.black, text_size = size.tiny, text_halign = text.align_right, text_valign = text.align_top)
+    styleCandidateZone(candidate, zoneColor, visible)
     array.push(zones, candidate)
     array.push(sides, side)
     array.push(bornBars, bar_index)
+    array.push(seen, visible)
     if array.size(zones) > activeLimit
-        retireCandidateZone(zones, sides, bornBars, history, 0, keepHistory, historyLimit, rightTime)
+        retireCandidateZone(zones, sides, bornBars, seen, history, 0, keepHistory, historyLimit, rightTime)
     array.size(zones)
 
-updateCandidateZones(array<box> zones, array<int> sides, array<int> bornBars, array<box> history, bool isFvg, string obMode, string fvgMode, int ageLimit, bool breakUp, bool breakDown, bool keepHistory, int historyLimit, int endTime) =>
+updateCandidateZones(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, bool isFvg, string obMode, string fvgMode, int ageLimit, bool breakUp, bool breakDown, bool keepHistory, int historyLimit, int endTime, bool overlapOnly, bool setupIsActive, int setupSide, float setupTopPrice, float setupBottomPrice) =>
     int position = array.size(zones) - 1
     while position >= 0
         box candidate = array.get(zones, position)
@@ -179,17 +194,22 @@ updateCandidateZones(array<box> zones, array<int> sides, array<int> bornBars, ar
                 crossed := obMode == "影线" ? high >= top : close > top
         bool expired = bar_index - array.get(bornBars, position) > ageLimit
         if barstate.isconfirmed and (reversed or crossed or expired)
-            retireCandidateZone(zones, sides, bornBars, history, position, keepHistory, historyLimit, endTime)
+            retireCandidateZone(zones, sides, bornBars, seen, history, position, keepHistory, historyLimit, endTime)
         else
             box.set_right(candidate, endTime)
+            color zoneColor = isFvg ? (side == 1 ? color.lime : color.orange) : (side == 1 ? fibLongColor : fibShortColor)
+            bool visible = not overlapOnly or (setupIsActive and side == setupSide and top >= setupBottomPrice and bottom <= setupTopPrice)
+            styleCandidateZone(candidate, zoneColor, visible)
+            if visible
+                array.set(seen, position, true)
         position -= 1
     array.size(zones)
 
-retireSameSideZones(array<box> zones, array<int> sides, array<int> bornBars, array<box> history, int side, bool keepHistory, int historyLimit, int endTime) =>
+retireSameSideZones(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int side, bool keepHistory, int historyLimit, int endTime) =>
     int position = array.size(zones) - 1
     while position >= 0
         if array.get(sides, position) == side
-            retireCandidateZone(zones, sides, bornBars, history, position, keepHistory, historyLimit, endTime)
+            retireCandidateZone(zones, sides, bornBars, seen, history, position, keepHistory, historyLimit, endTime)
         position -= 1
     array.size(zones)
 
@@ -229,15 +249,24 @@ var int pendingSweepSide = 0
 var int pendingSweepBar = na
 var int setupSwingBar = na
 var int signaledSwingBar = na
+var int consumedSwingBar = na
+var bool setupTouched = false
 var obZones = array.new_box()
 var obZoneSides = array.new_int()
 var obZoneBornBars = array.new_int()
+var obZoneSeen = array.new_bool()
 var obZoneHistory = array.new_box()
 var fvgZones = array.new_box()
 var fvgZoneSides = array.new_int()
 var fvgZoneBornBars = array.new_int()
+var fvgZoneSeen = array.new_bool()
 var fvgZoneHistory = array.new_box()
 var box setupZone = na
+var setupZoneHistory = array.new_box()
+var line setupInvalidationLine = na
+var label setupInvalidationLabel = na
+var line sweepTargetLine = na
+var label sweepTargetLabel = na
 
 // 原始孤立点标记保留；内包只从结构折线中合并。
 if newHigh or newLow
@@ -453,11 +482,12 @@ float setupNearPrice = tradeSwingEnd + (tradeSwingStart - tradeSwingEnd) * fibNe
 float setupFarPrice = tradeSwingEnd + (tradeSwingStart - tradeSwingEnd) * fibFar
 float setupTop = math.max(setupNearPrice, setupFarPrice)
 float setupBottom = math.min(setupNearPrice, setupFarPrice)
-bool setupActive = tradeSide != 0 and not na(tradeConfirmedBar) and bar_index - tradeConfirmedBar <= maxSetupBars and (na(signaledSwingBar) or signaledSwingBar != tradeConfirmedBar)
+bool setupActive = tradeSide != 0 and not na(tradeConfirmedBar) and bar_index - tradeConfirmedBar <= maxSetupBars and (na(signaledSwingBar) or signaledSwingBar != tradeConfirmedBar) and (na(consumedSwingBar) or consumedSwingBar != tradeConfirmedBar)
 if na(setupSwingBar) or setupSwingBar != tradeConfirmedBar
     setupSwingBar := tradeConfirmedBar
     pendingSweepSide := 0
     pendingSweepBar := na
+    setupTouched := false
 if not setupActive
     pendingSweepSide := 0
     pendingSweepBar := na
@@ -469,6 +499,8 @@ float candleBody = math.abs(close - open)
 float closeAtr = ta.atr(trendAtrLength)
 bool bullishTrendCandle = candleRange > 0 and close > open and close > close[1] and candleBody / candleRange >= minBodyFraction and (close - low) / candleRange >= minClosePosition and close - close[1] >= closeAtr * minCloseMoveAtr
 bool bearishTrendCandle = candleRange > 0 and close < open and close < close[1] and candleBody / candleRange >= minBodyFraction and (high - close) / candleRange >= minClosePosition and close[1] - close >= closeAtr * minCloseMoveAtr
+bool validSweepLow = not na(sweepRefLow) and (not requireNewShortPoint or sweepRefLowTime > tradeSwingEndTime)
+bool validSweepHigh = not na(sweepRefHigh) and (not requireNewShortPoint or sweepRefHighTime > tradeSwingEndTime)
 if barstate.isconfirmed and setupActive and bar_index > tradeConfirmedBar
     if not na(pendingSweepBar) and bar_index - pendingSweepBar > confirmationBars
         pendingSweepSide := 0
@@ -481,21 +513,60 @@ if barstate.isconfirmed and setupActive and bar_index > tradeConfirmedBar
         signaledSwingBar := tradeConfirmedBar
         pendingSweepSide := 0
         pendingSweepBar := na
+        setupActive := false
     else
         bool touchesZone = high >= setupBottom and low <= setupTop
-        bool validLow = not na(sweepRefLow) and (not requireNewShortPoint or sweepRefLowTime > tradeSwingEndTime)
-        bool validHigh = not na(sweepRefHigh) and (not requireNewShortPoint or sweepRefHighTime > tradeSwingEndTime)
-        if tradeSide == 1 and touchesZone and validLow and sweepRefLow - low >= minSweepTicks * syminfo.mintick and close - sweepRefLow >= minReclaimTicks * syminfo.mintick
+        if touchesZone
+            setupTouched := true
+        if tradeSide == 1 and touchesZone and validSweepLow and sweepRefLow - low >= minSweepTicks * syminfo.mintick and close - sweepRefLow >= minReclaimTicks * syminfo.mintick
             pendingSweepSide := 1
             pendingSweepBar := bar_index
-        if tradeSide == -1 and touchesZone and validHigh and high - sweepRefHigh >= minSweepTicks * syminfo.mintick and sweepRefHigh - close >= minReclaimTicks * syminfo.mintick
+        if tradeSide == -1 and touchesZone and validSweepHigh and high - sweepRefHigh >= minSweepTicks * syminfo.mintick and sweepRefHigh - close >= minReclaimTicks * syminfo.mintick
             pendingSweepSide := -1
             pendingSweepBar := bar_index
+        bool leftWithTrend = tradeSide == 1 ? close > setupTop : close < setupBottom
+        if retireAfterMissedTouch and setupTouched and pendingSweepSide == 0 and leftWithTrend
+            consumedSwingBar := tradeConfirmedBar
+            setupActive := false
+
+if showSetupInvalidation and setupActive
+    if na(setupInvalidationLine)
+        setupInvalidationLine := line.new(tradeConfirmedTime, tradeSwingStart, time, tradeSwingStart, xloc = xloc.bar_time, color = color.new(color.gray, 35), style = line.style_dotted)
+        setupInvalidationLabel := label.new(time, tradeSwingStart, "失效", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.gray, size = size.tiny)
+    else
+        line.set_xy1(setupInvalidationLine, tradeConfirmedTime, tradeSwingStart)
+        line.set_xy2(setupInvalidationLine, time, tradeSwingStart)
+        label.set_x(setupInvalidationLabel, time)
+        label.set_y(setupInvalidationLabel, tradeSwingStart)
+else if not na(setupInvalidationLine)
+    line.delete(setupInvalidationLine)
+    label.delete(setupInvalidationLabel)
+    setupInvalidationLine := na
+    setupInvalidationLabel := na
+
+bool hasSweepTarget = tradeSide == 1 ? validSweepLow : validSweepHigh
+float sweepTargetPrice = tradeSide == 1 ? sweepRefLow : sweepRefHigh
+int sweepTargetTime = tradeSide == 1 ? sweepRefLowTime : sweepRefHighTime
+if showSweepTarget and setupActive and hasSweepTarget
+    if na(sweepTargetLine)
+        sweepTargetLine := line.new(sweepTargetTime, sweepTargetPrice, time, sweepTargetPrice, xloc = xloc.bar_time, color = color.new(color.gray, 25), style = line.style_dashed)
+        sweepTargetLabel := label.new(time, sweepTargetPrice, tradeSide == 1 ? "待扫低" : "待扫高", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.gray, size = size.tiny)
+    else
+        line.set_xy1(sweepTargetLine, sweepTargetTime, sweepTargetPrice)
+        line.set_xy2(sweepTargetLine, time, sweepTargetPrice)
+        label.set_x(sweepTargetLabel, time)
+        label.set_y(sweepTargetLabel, sweepTargetPrice)
+        label.set_text(sweepTargetLabel, tradeSide == 1 ? "待扫低" : "待扫高")
+else if not na(sweepTargetLine)
+    line.delete(sweepTargetLine)
+    label.delete(sweepTargetLabel)
+    sweepTargetLine := na
+    sweepTargetLabel := na
 
 if showSetupZone and setupActive and not longSetupSignal and not shortSetupSignal
     color zoneColor = tradeSide == 1 ? fibLongColor : fibShortColor
     if na(setupZone)
-        setupZone := box.new(tradeConfirmedTime, setupTop, time, setupBottom, xloc = xloc.bar_time, extend = extend.right, border_color = color.new(zoneColor, 50), bgcolor = color.new(zoneColor, 92))
+        setupZone := box.new(tradeConfirmedTime, setupTop, time, setupBottom, xloc = xloc.bar_time, extend = extend.right, border_color = color.new(zoneColor, 50), bgcolor = color.new(zoneColor, 92), text = "回撤", text_color = color.black, text_size = size.tiny, text_halign = text.align_right, text_valign = text.align_top)
     else
         box.set_left(setupZone, tradeConfirmedTime)
         box.set_right(setupZone, time)
@@ -504,15 +575,25 @@ if showSetupZone and setupActive and not longSetupSignal and not shortSetupSigna
         box.set_border_color(setupZone, color.new(zoneColor, 50))
         box.set_bgcolor(setupZone, color.new(zoneColor, 92))
 else if not na(setupZone)
-    box.delete(setupZone)
+    if keepExpiredSetupZones
+        box.set_extend(setupZone, extend.none)
+        box.set_right(setupZone, time)
+        box.set_border_color(setupZone, color.new(color.gray, 82))
+        box.set_bgcolor(setupZone, color.new(color.gray, 96))
+        box.set_text_color(setupZone, color.gray)
+        array.push(setupZoneHistory, setupZone)
+        if array.size(setupZoneHistory) > 20
+            box.delete(array.shift(setupZoneHistory))
+    else
+        box.delete(setupZone)
     setupZone := na
 
 // These are observable candidates around a confirmed medium-level break,
 // not evidence that institutional orders were placed at either zone.
 bool structureBreakUp = midBreakUp or autoSwitchUp
 bool structureBreakDown = midBreakDown or autoSwitchDown
-updateCandidateZones(obZones, obZoneSides, obZoneBornBars, obZoneHistory, false, obInvalidMode, fvgFillMode, maxZoneBars, structureBreakUp, structureBreakDown, keepExpiredZones, maxExpiredZones, time)
-updateCandidateZones(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneHistory, true, obInvalidMode, fvgFillMode, maxZoneBars, structureBreakUp, structureBreakDown, keepExpiredZones, maxExpiredZones, time)
+updateCandidateZones(obZones, obZoneSides, obZoneBornBars, obZoneSeen, obZoneHistory, false, obInvalidMode, fvgFillMode, maxZoneBars, structureBreakUp, structureBreakDown, keepExpiredZones, maxExpiredZones, time, onlyOverlappingBreakZones, setupActive, tradeSide, setupTop, setupBottom)
+updateCandidateZones(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneSeen, fvgZoneHistory, true, obInvalidMode, fvgFillMode, maxZoneBars, structureBreakUp, structureBreakDown, keepExpiredZones, maxExpiredZones, time, onlyOverlappingBreakZones, setupActive, tradeSide, setupTop, setupBottom)
 if midBreakUp or midBreakDown
     int breakSide = midBreakUp ? 1 : -1
     if showObCandidates
@@ -524,8 +605,9 @@ if midBreakUp or midBreakDown
             bool obAlreadyInvalid = breakSide == 1 ? (obInvalidMode == "影线" ? low <= low[obOffset] : close < low[obOffset]) : (obInvalidMode == "影线" ? high >= high[obOffset] : close > high[obOffset])
             if not obAlreadyInvalid
                 if replaceSameSideZone
-                    retireSameSideZones(obZones, obZoneSides, obZoneBornBars, obZoneHistory, breakSide, keepExpiredZones, maxExpiredZones, time)
-                addCandidateZone(obZones, obZoneSides, obZoneBornBars, obZoneHistory, time[obOffset], high[obOffset], time, low[obOffset], breakSide == 1 ? fibLongColor : fibShortColor, breakSide, maxCandidateZones, keepExpiredZones, maxExpiredZones)
+                    retireSameSideZones(obZones, obZoneSides, obZoneBornBars, obZoneSeen, obZoneHistory, breakSide, keepExpiredZones, maxExpiredZones, time)
+                bool showOb = not onlyOverlappingBreakZones or (setupActive and breakSide == tradeSide and high[obOffset] >= setupBottom and low[obOffset] <= setupTop)
+                addCandidateZone(obZones, obZoneSides, obZoneBornBars, obZoneSeen, obZoneHistory, time[obOffset], high[obOffset], time, low[obOffset], breakSide == 1 ? fibLongColor : fibShortColor, "OB", breakSide, maxCandidateZones, keepExpiredZones, maxExpiredZones, showOb)
     if showFvgCandidates
         int fvgOffset = na
         for i = 0 to fvgLookback - 1
@@ -541,8 +623,9 @@ if midBreakUp or midBreakDown
             float fvgTop = breakSide == 1 ? low[fvgOffset] : low[fvgOffset + 2]
             float fvgBottom = breakSide == 1 ? high[fvgOffset + 2] : high[fvgOffset]
             if replaceSameSideZone
-                retireSameSideZones(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneHistory, breakSide, keepExpiredZones, maxExpiredZones, time)
-            addCandidateZone(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneHistory, time[fvgOffset + 2], fvgTop, time, fvgBottom, breakSide == 1 ? color.lime : color.orange, breakSide, maxCandidateZones, keepExpiredZones, maxExpiredZones)
+                retireSameSideZones(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneSeen, fvgZoneHistory, breakSide, keepExpiredZones, maxExpiredZones, time)
+            bool showFvg = not onlyOverlappingBreakZones or (setupActive and breakSide == tradeSide and fvgTop >= setupBottom and fvgBottom <= setupTop)
+            addCandidateZone(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneSeen, fvgZoneHistory, time[fvgOffset + 2], fvgTop, time, fvgBottom, breakSide == 1 ? color.lime : color.orange, "FVG", breakSide, maxCandidateZones, keepExpiredZones, maxExpiredZones, showFvg)
 
 // Labels are created only for pivots surviving same-type and containment
 // processing, so the chart and the medium structure line describe the same points.
