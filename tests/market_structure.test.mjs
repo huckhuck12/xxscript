@@ -278,7 +278,8 @@ assert.match(pine, /retireAfterMissedTouch and setupTouched and pendingSweepSide
 assert.match(pine, /showSetupInvalidation and setupActive/, "Pine marks the current swing invalidation level");
 assert.match(pine, /showSweepTarget and setupActive and hasSweepTarget/, "Pine marks the eligible short-term sweep point");
 assert.match(pine, /setupIsActive and side == setupSide and top >= setupBottomPrice and bottom <= setupTopPrice/, "Pine shows only same-side overlapping break zones by default");
-assert.match(pine, /onlyOverlappingBreakZones = input\.bool\(true,/, "overlap filtering is on by default");
+assert.match(pine, /onlyOverlappingBreakZones = input\.bool\(false,/, "enabled break zones are visible without an active setup by default");
+assert.match(pine, /keepExpiredSetupZones = input\.bool\(true,/, "ended retracement zones remain available for chart review by default");
 assert.match(pine, /if keepHistory and wasVisible/, "never-visible break zones do not appear as gray history");
 assert.match(pine, /box\.set_extend\(setupZone, extend\.none\)/, "historical retracement boxes stop extending");
 assert.match(pine, /showTradeFib = input\.bool\(false,/, "trade reference lines default off when the zone is shown");

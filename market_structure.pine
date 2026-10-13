@@ -27,7 +27,8 @@ showSetupZone = input.bool(true, "显示候选回撤区", tooltip = "仅以已�
 showSetupInvalidation = input.bool(true, "显示摆动失效位", tooltip = "细线标出当前顺势摆动的起点；价格触及后，该摆动的回撤机会失效。", group = groupSetup)
 showSweepTarget = input.bool(true, "显示待扫短期点", tooltip = "短虚线标出当前已确认、可用于扫荡判断的最近短期低点或高点；随新短期点更新。", group = groupSetup)
 retireAfterMissedTouch = input.bool(true, "触区后顺势离开即结束", tooltip = "回撤区曾被影线或实体触及后，若收盘顺势离开区域且没有等待确认的扫荡，就结束本次候选机会。关闭可允许之后再次回到区域。", group = groupSetup)
-keepExpiredSetupZones = input.bool(false, "保留已结束回撤区供复盘", tooltip = "关闭：回撤区结束后直接删除。开启：停止向右延伸并变灰，仅保留最近 20 个历史回撤区。", group = groupSetup)
+keepExpiredSetupZones = input.bool(true, "保留已结束回撤区供复盘", tooltip = "开启：回撤区结束后停止向右延伸并变灰；灰框不是当前机会。关闭则直接删除。", group = groupSetup)
+maxExpiredSetupZones = input.int(6, "历史回撤区保留数量", minval = 1, maxval = 20, tooltip = "只保留最近几个已结束回撤区，避免 1 分钟图堆满灰框；仅在上方复盘开关开启时生效。", group = groupSetup)
 showSetupSignals = input.bool(true, "显示候选信号", tooltip = "先在回撤区扫短期点并收回，再由后续趋势 K 线确认。标记是观察信号，不是成交记录。", group = groupSetup)
 setupFibNear = input.float(0.5, "回撤区起点", minval = 0.0, maxval = 1.0, step = 0.001, tooltip = "从摆动终点向起点回撤的比例；0 是终点，1 是起点。两个端点输入顺序可互换。", group = groupSetup)
 setupFibFar = input.float(0.618, "回撤区终点", minval = 0.0, maxval = 1.0, step = 0.001, tooltip = "候选扫荡必须触及两条回撤线之间的价格范围；不是自动挂单价。", group = groupSetup)
@@ -45,7 +46,7 @@ groupBreakZones = "结构突破候选区"
 showObCandidates = input.bool(false, "显示突破前反向 K 线区域", tooltip = "OB 候选：中期恢复突破前最近的反向 K 线高低价区间。只是图形线索，不证明存在机构订单。", group = groupBreakZones)
 obLookback = input.int(10, "反向 K 线回看根数", minval = 1, maxval = 50, tooltip = "从突破 K 线向前最多查找多少根，取最近一根反向 K 线作为 OB 候选来源。", group = groupBreakZones)
 showFvgCandidates = input.bool(false, "显示三 K 线缺口", tooltip = "FVG 候选：只在中期恢复突破附近查找第一根与第三根 K 线高低范围不重叠的缺口；不对每个短期点单独画区，也不等于所有失衡。", group = groupBreakZones)
-onlyOverlappingBreakZones = input.bool(true, "只显示与当前回撤区重合的同向区域", tooltip = "开启时，仅显示与当前有效中期回撤区价格重叠、方向一致的 OB/FVG；其他区域仍按原规则跟踪失效，但暂时隐藏。关闭可查看全部活跃区域。", group = groupBreakZones)
+onlyOverlappingBreakZones = input.bool(false, "只显示与当前回撤区重合的同向区域", tooltip = "默认关闭：启用 OB/FVG 后可查看全部仍有效的候选区。开启时只显示与当前有效中期回撤区价格重叠、方向一致的区域；其他区域仍按原规则跟踪失效，但暂时隐藏。", group = groupBreakZones)
 fvgLookback = input.int(3, "缺口回看根数", minval = 1, maxval = 10, tooltip = "突破时从当前 K 线向前查找最近几组三 K 线缺口；已按所选失效口径回补的缺口不标。", group = groupBreakZones)
 minFvgTicks = input.int(1, "缺口最小跳动数", minval = 1, maxval = 100, tooltip = "三 K 线缺口至少宽多少个品种最小价格跳动。", group = groupBreakZones)
 obInvalidMode = input.string("收盘价", "反向 K 线区失效依据", options = ["影线", "收盘价"], tooltip = "多头 OB 候选以区域下边界为远端，空头以上边界为远端。影线模式触及即失效；收盘价模式要求收在远端外。", group = groupBreakZones)
@@ -146,8 +147,8 @@ retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, arr
     bool wasVisible = array.remove(seen, position)
     if keepHistory and wasVisible
         box.set_right(candidate, endTime)
-        box.set_border_color(candidate, color.new(color.gray, 82))
-        box.set_bgcolor(candidate, color.new(color.gray, 96))
+        box.set_border_color(candidate, color.new(color.gray, 65))
+        box.set_bgcolor(candidate, color.new(color.gray, 93))
         box.set_text_color(candidate, color.gray)
         array.push(history, candidate)
         if array.size(history) > historyLimit
@@ -578,11 +579,11 @@ else if not na(setupZone)
     if keepExpiredSetupZones
         box.set_extend(setupZone, extend.none)
         box.set_right(setupZone, time)
-        box.set_border_color(setupZone, color.new(color.gray, 82))
-        box.set_bgcolor(setupZone, color.new(color.gray, 96))
+        box.set_border_color(setupZone, color.new(color.gray, 65))
+        box.set_bgcolor(setupZone, color.new(color.gray, 93))
         box.set_text_color(setupZone, color.gray)
         array.push(setupZoneHistory, setupZone)
-        if array.size(setupZoneHistory) > 20
+        if array.size(setupZoneHistory) > maxExpiredSetupZones
             box.delete(array.shift(setupZoneHistory))
     else
         box.delete(setupZone)
