@@ -93,11 +93,12 @@ function setupLevels(start, end, near, far) {
   return [Math.min(...prices), Math.max(...prices)];
 }
 
-function setupEvents(bars, { side, start, end, confirmedAt, shortPoint, shortPointTime, swingEndTime, confirmationBars = 3 }) {
+function setupEvents(bars, { side, start, end, confirmedAt, shortPoint, shortPointTime, swingEndTime, confirmationBars = 3, maxSetupBars = 60 }) {
   const [bottom, top] = setupLevels(start, end, 0.5, 0.618);
   let sweptAt = -1;
   const signals = [];
   for (let i = confirmedAt + 1; i < bars.length; i++) {
+    if (i - confirmedAt > maxSetupBars) break;
     const bar = bars[i];
     const previous = bars[i - 1];
     if (side === 1 ? bar.low <= start : bar.high >= start) break;
@@ -117,6 +118,17 @@ function setupEvents(bars, { side, start, end, confirmedAt, shortPoint, shortPoi
     if (touchesZone && shortPointTime > swingEndTime && sweep) sweptAt = i;
   }
   return signals;
+}
+
+function candidateZoneExpired(zone, bar, index, { obMode = "收盘价", fvgMode = "完全回补", maxZoneBars = 60, oppositeBreak = false } = {}) {
+  const crossed = zone.kind === "FVG"
+    ? zone.side === 1
+      ? bar.low <= (fvgMode === "首次触及" ? zone.top : zone.bottom)
+      : bar.high >= (fvgMode === "首次触及" ? zone.bottom : zone.top)
+    : zone.side === 1
+      ? (obMode === "影线" ? bar.low <= zone.bottom : bar.close < zone.bottom)
+      : (obMode === "影线" ? bar.high >= zone.top : bar.close > zone.top);
+  return crossed || oppositeBreak || index - zone.born > maxZoneBars;
 }
 
 const highSeries = [10, 12, 11, 9];
@@ -207,6 +219,19 @@ const shortBars = [
 ];
 assert.deepEqual(setupEvents(shortBars, { side: -1, start: 120, end: 100, confirmedAt: 0, shortPoint: 112, shortPointTime: 2, swingEndTime: 1 }), [3], "short setup mirrors the long sequence");
 assert.deepEqual(setupEvents([...longBars.slice(0, 3), longBars[1], longBars[1], longBars[3]], { side: 1, start: 80, end: 100, confirmedAt: 0, shortPoint: 88, shortPointTime: 2, swingEndTime: 1, confirmationBars: 2 }), [], "late trend candle cannot confirm an expired sweep");
+assert.deepEqual(setupEvents(longBars, { side: 1, start: 80, end: 100, confirmedAt: 0, shortPoint: 88, shortPointTime: 2, swingEndTime: 1, maxSetupBars: 2 }), [], "an expired swing cannot produce a late confirmation");
+const longFvg = { kind: "FVG", side: 1, top: 105, bottom: 100, born: 10 };
+const shortFvg = { kind: "FVG", side: -1, top: 100, bottom: 95, born: 10 };
+assert.equal(candidateZoneExpired(longFvg, { low: 103 }, 11), false, "partial long FVG fill stays active by default");
+assert.equal(candidateZoneExpired(longFvg, { low: 103 }, 11, { fvgMode: "首次触及" }), true, "first-touch mode retires a partly filled FVG");
+assert.equal(candidateZoneExpired(longFvg, { low: 100 }, 11), true, "full long FVG fill retires the zone");
+assert.equal(candidateZoneExpired(shortFvg, { high: 97 }, 11), false, "partial short FVG fill stays active by default");
+assert.equal(candidateZoneExpired(shortFvg, { high: 100 }, 11), true, "full short FVG fill retires the zone");
+const longOb = { kind: "OB", side: 1, top: 105, bottom: 100, born: 10 };
+assert.equal(candidateZoneExpired(longOb, { low: 99, close: 101 }, 11), false, "OB close mode tolerates a wick through its far side");
+assert.equal(candidateZoneExpired(longOb, { low: 99, close: 101 }, 11, { obMode: "影线" }), true, "OB wick mode retires on a far-side touch");
+assert.equal(candidateZoneExpired(longOb, { low: 102, close: 102 }, 71), true, "age limit retires an untouched zone");
+assert.equal(candidateZoneExpired(longOb, { low: 102, close: 102 }, 11, { oppositeBreak: true }), true, "opposite structure break retires the zone");
 
 const pine = readFileSync(new URL("../market_structure.pine", import.meta.url), "utf8");
 assert.match(pine, /high\[rightBars\] > leftHigh and high\[rightBars\] > rightHigh/, "Pine uses strict high comparison");
@@ -229,5 +254,10 @@ assert.match(pine, /float sweepRefLow = previousShortLow/, "sweep uses the short
 assert.match(pine, /bar_index > tradeConfirmedBar/, "setup waits until the medium swing is confirmed");
 assert.match(pine, /bar_index > pendingSweepBar/, "trend candle follows, rather than coincides with, the sweep");
 assert.match(pine, /signaledSwingBar := tradeConfirmedBar/, "a confirmed swing signals at most once");
+assert.match(pine, /bar_index - tradeConfirmedBar <= maxSetupBars/, "setup has a total age limit");
+assert.match(pine, /setupActive and not longSetupSignal and not shortSetupSignal/, "active setup box closes on the signal bar");
+assert.match(pine, /updateCandidateZones\(obZones,/, "OB candidates are updated each bar");
+assert.match(pine, /updateCandidateZones\(fvgZones,/, "FVG candidates are updated each bar");
+assert.match(pine, /box\.set_right\(candidate, endTime\)/, "candidate boxes stop at their expiry bar");
 
 console.log("market_structure: deterministic checks passed");
