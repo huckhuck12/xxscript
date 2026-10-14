@@ -138,6 +138,39 @@ function visibleBreakZone(zone, setup, overlapOnly = true) {
   return !overlapOnly || (setup.active && zone.side === setup.side && zone.top >= setup.bottom && zone.bottom <= setup.top);
 }
 
+function advanceObservation(state, { eventSide = 0, anchor, low, high, strictSide = 0, conflict = false, mode = 0 }) {
+  state = { ...state };
+  if (conflict) {
+    state.bias = 0;
+    state.invalidated = true;
+  } else if (eventSide) {
+    state.bias = mode && mode !== eventSide ? 0 : eventSide;
+    state.anchor = anchor;
+    state.invalidated = state.bias === 0;
+  }
+  if (state.bias && (state.bias === 1 ? low <= state.anchor : high >= state.anchor)) {
+    state.bias = 0;
+    state.invalidated = true;
+  }
+  const confirmed = strictSide !== 0 && !state.invalidated && (!state.bias || state.bias === strictSide);
+  return { ...state, side: confirmed ? strictSide : state.bias, confirmed };
+}
+
+let direction = advanceObservation({ bias: 0, invalidated: false }, { eventSide: 1, anchor: 100, low: 105, high: 115 });
+assert.equal(direction.side, 1, "a first upward medium break gives an early long observation direction");
+assert.equal(direction.confirmed, false, "one break does not claim strict trend confirmation");
+direction = advanceObservation(direction, { low: 106, high: 120, strictSide: 1 });
+assert.equal(direction.confirmed, true, "matching strict structure upgrades the early direction");
+direction = advanceObservation(direction, { eventSide: -1, anchor: 120, low: 104, high: 110, strictSide: 1 });
+assert.equal(direction.side, -1, "a newer opposite break overrides the older confirmed long structure");
+assert.equal(direction.confirmed, false, "opposite provisional direction is not reported as confirmed");
+direction = advanceObservation(direction, { low: 103, high: 120, strictSide: 1 });
+assert.equal(direction.side, 0, "touching the short origin cancels the direction without reviving an older long");
+direction = advanceObservation(direction, { eventSide: 1, anchor: 100, low: 103, high: 115, strictSide: 1 });
+assert.equal(direction.confirmed, true, "a new compatible break can restore confirmation");
+assert.equal(advanceObservation(direction, { conflict: true, strictSide: 1 }).side, 0, "a two-sided conflict clears observation direction");
+assert.equal(advanceObservation(direction, { eventSide: -1, anchor: 120, low: 105, high: 110, mode: 1 }).side, 0, "long-only mode never gives a provisional short");
+
 const highSeries = [10, 12, 11, 9];
 assert.equal(isStrictPivot(highSeries, 1, 1, 1, 1), true, "strict isolated high");
 assert.equal(isStrictPivot([10, 12, 12], 1, 1, 1, 1), false, "equal high is not isolated");
