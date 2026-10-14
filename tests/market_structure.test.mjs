@@ -252,6 +252,11 @@ assert.equal(visibleBreakZone({ side: 1, top: 100, bottom: 95 }, { ...activeSetu
 assert.equal(visibleBreakZone({ side: -1, top: 100, bottom: 95 }, activeSetup, false), true, "the filter can be disabled");
 
 const pine = readFileSync(new URL("../market_structure.pine", import.meta.url), "utf8");
+assert.match(pine, /varip touchAlertKeys = array\.new_string\(\)/, "arrival deduplication survives realtime rollback");
+assert.match(pine, /close >= bottom and close <= top/, "instant arrival uses the current price, not the cumulative bar range");
+assert.match(pine, /bar_index > array\.get\(bornBars, i\)/, "a creation-bar gap is not treated as a return to the zone");
+assert.match(pine, /barstate\.isrealtime and \(not closeTouchCheck or barstate\.isconfirmed\)/, "notifications honor realtime and close-only settings");
+assert.ok(pine.indexOf("candidateTouchMessage(obZones") < pine.indexOf("updateCandidateZones(obZones"), "touch notification is evaluated before first-touch retirement");
 assert.match(pine, /high\[rightBars\] > leftHigh and high\[rightBars\] > rightHigh/, "Pine uses strict high comparison");
 assert.match(pine, /low\[rightBars\] < leftLow and low\[rightBars\] < rightLow/, "Pine uses strict low comparison");
 assert.match(pine, /innerHigh < outerHigh and innerLow > outerLow/, "Pine contains strict mode");
