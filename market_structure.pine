@@ -1,67 +1,75 @@
 //@version=6
 indicator("短期 / 中期市场结构", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 250, max_bars_back = 100)
 
-groupShort = "短期结构"
-leftBars = input.int(1, "左侧确认 K 线数", minval = 1, maxval = 20, tooltip = "孤立高点必须高于左侧这些 K 线；孤立低点必须低于它们。", group = groupShort)
-rightBars = input.int(1, "右侧确认 K 线数", minval = 1, maxval = 20, tooltip = "短期点要等右侧这些 K 线收完才确认；图上标记会回绘到极值 K 线。", group = groupShort)
-showShortPoints = input.bool(false, "显示短期点", tooltip = "显示原始孤立高低点；它们不一定都保留在合并后的短期结构线上。默认关闭以突出当前待扫点。", group = groupShort)
-showShortLines = input.bool(true, "显示短期结构线", tooltip = "连接处理连续同类点与内包之后的短期高低点。", group = groupShort)
-shortContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "内包指后一个高低区间落在前一个区间内。严格模式不允许碰边，含边界模式允许相等；这里只整理短期折线。", group = groupShort)
+groupCommon = "01 常用显示与方向"
+groupAlerts = "02 到价提醒（需创建 TradingView 警报）"
+groupShort = "高级 · 短期结构"
+groupMid = "高级 · 中期结构"
+groupSetup = "高级 · 回撤与扫荡"
+groupMomentum = "高级 · 趋势 K 线"
+groupBreakZones = "高级 · OB / FVG"
+groupHistory = "高级 · 历史与数量"
+groupFib = "高级 · 参考线与颜色"
+advancedSettings = input.bool(false, "启用高级参数调整", tooltip = "日常只需调整常用显示、方向和提醒。高级参数保留当前值，开启后才可编辑；并非隐藏参数。顺势标注使用回撤框的中期方向，灰色历史框不代表当前机会。", group = groupCommon, display = display.none)
 
-groupMid = "中期结构"
-trendMode = input.string("自动/双向", "趋势模式", options = ["上涨", "下跌", "自动/双向"], tooltip = "上涨或下跌只运行对应的中期确认规则；自动/双向同时维护两套候选，并按所选突破依据触发方向切换。方向切换不代表突破已站稳。", group = groupMid)
-startTime = input.time(timestamp("01 Jan 2020 00:00 +0000"), "趋势起始时间", tooltip = "只用此时间之后形成的短期点建立中期候选结构；不是交易入场时间。", group = groupMid)
-breakMode = input.string("影线", "突破依据", options = ["影线", "收盘价"], tooltip = "影线：最高/最低价刺破就算结构突破；收盘价：必须收在边界外。两者都不要求后续 K 线跟进。", group = groupMid)
-showMidPoints = input.bool(true, "显示中期点", tooltip = "中期高低点在价格突破基准后才确认，标签回绘到原始极值位置。", group = groupMid)
-showMidLines = input.bool(true, "显示中期结构线", tooltip = "连接最终保留的中期高低点；后续新点可能使末端结构线重新整理。", group = groupMid)
-midContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "内包是后一个高低区间落在前一个区间之内。这里只整理中期折线，不改变原始短期点。", group = groupMid)
+trendMode = input.string("自动/双向", "趋势模式", options = ["上涨", "下跌", "自动/双向"], tooltip = "上涨或下跌只运行对应的中期确认规则；自动/双向同时维护两套候选，并按所选突破依据触发方向切换。方向切换不代表突破已站稳。", group = groupCommon, display = display.none)
+showMidPoints = input.bool(true, "显示中期点", tooltip = "中期高低点在价格突破基准后才确认，标签回绘到原始极值位置。", group = groupCommon, display = display.none)
+showMidLines = input.bool(true, "显示中期结构线", tooltip = "连接最终保留的中期高低点；后续新点可能使末端结构线重新整理。", group = groupCommon, display = display.none)
+showSetupZone = input.bool(true, "显示候选回撤区", tooltip = "仅以已确认的中期顺势摆动定回撤区。按下方设置可在触区后顺势离开时结束机会。与上方顺势交易回撤线通常二选一显示；关闭此框不停止信号计算。", group = groupCommon, display = display.none)
+showSetupInvalidation = input.bool(true, "显示摆动失效位", tooltip = "细线标出当前顺势摆动的起点；价格触及后，该摆动的回撤机会失效。", group = groupCommon, display = display.none)
+showSweepTarget = input.bool(true, "显示待扫短期点", tooltip = "短虚线标出当前已确认、可用于扫荡判断的最近短期低点或高点；随新短期点更新。", group = groupCommon, display = display.none)
+showSetupSignals = input.bool(true, "显示候选信号", tooltip = "先在回撤区扫短期点并收回，再由后续趋势 K 线确认。标记是观察信号，不是成交记录。", group = groupCommon, display = display.none)
+showObCandidates = input.bool(false, "显示 OB 候选区", tooltip = "OB 候选：中期恢复突破前最近的反向 K 线高低价区间。只是图形线索，不证明存在机构订单。", group = groupCommon, display = display.none)
+showFvgCandidates = input.bool(false, "显示 FVG 候选区", tooltip = "FVG 候选：只在中期恢复突破附近查找第一根与第三根 K 线高低范围不重叠的缺口；不对每个短期点单独画区，也不等于所有失衡。", group = groupCommon, display = display.none)
+onlyOverlappingBreakZones = input.bool(false, "只显示与当前回撤区重合的同向区域", tooltip = "默认关闭：启用 OB/FVG 后可查看全部仍有效的候选区。开启时只显示与当前有效中期回撤区价格重叠、方向一致的区域；其他区域仍按原规则跟踪失效，但暂时隐藏。", group = groupCommon, display = display.none)
 
-groupFib = "中期斐波那契回撤"
-showMidFib = input.bool(false, "显示最近一段摆动参考位", tooltip = "灰色虚线按最后一段中期折线绘制；0 是摆动终点，1 是起点，只表示结构参考，不表示做多或做空。默认关闭以减少重叠。", group = groupFib)
-showTradeFib = input.bool(false, "显示顺势交易回撤位", tooltip = "显示已确认中期顺势摆动的 0.618、0.786 参考线。与下方候选回撤区通常二选一显示，避免 0.618 附近重叠；关闭此线不影响回撤扫荡信号。", group = groupFib)
-fibLongColor = input.color(color.teal, "顺势多头颜色", group = groupFib)
-fibShortColor = input.color(color.red, "顺势空头颜色", group = groupFib)
+alertSetupTouch = input.bool(true, "提醒：进入回撤区", tooltip = "当前有效中期回撤区首次到价时提醒，不要求完成扫荡确认。", group = groupAlerts, display = display.none)
+alertObTouch = input.bool(true, "提醒：进入 OB", tooltip = "只提醒已启用、符合当前显示过滤的活跃 OB；灰色历史框不提醒。", group = groupAlerts, display = display.none)
+alertFvgTouch = input.bool(true, "提醒：进入 FVG", tooltip = "只提醒已启用、符合当前显示过滤的活跃 FVG；首次触及失效模式下，会先提醒再收起区域。", group = groupAlerts, display = display.none)
+touchAlertTiming = input.string("即时到价", "提醒时机", options = ["即时到价", "收盘检查"], tooltip = "即时到价：实时最新价格进入区域即提醒。收盘检查：收盘时检查整根 K 线是否触及。同一区域只提醒一次；跳空直接越过区域不视为即时到价。更新脚本或设置后需重新创建 TradingView 提醒，条件选择任何 alert() 函数调用。", group = groupAlerts, display = display.none)
 
-groupSetup = "回撤扫荡确认"
-showSetupZone = input.bool(true, "显示候选回撤区", tooltip = "仅以已确认的中期顺势摆动定回撤区。按下方设置可在触区后顺势离开时结束机会。与上方顺势交易回撤线通常二选一显示；关闭此框不停止信号计算。", group = groupSetup)
-showSetupInvalidation = input.bool(true, "显示摆动失效位", tooltip = "细线标出当前顺势摆动的起点；价格触及后，该摆动的回撤机会失效。", group = groupSetup)
-showSweepTarget = input.bool(true, "显示待扫短期点", tooltip = "短虚线标出当前已确认、可用于扫荡判断的最近短期低点或高点；随新短期点更新。", group = groupSetup)
-retireAfterMissedTouch = input.bool(true, "触区后顺势离开即结束", tooltip = "回撤区曾被影线或实体触及后，若收盘顺势离开区域且没有等待确认的扫荡，就结束本次候选机会。关闭可允许之后再次回到区域。", group = groupSetup)
-keepExpiredSetupZones = input.bool(true, "保留已结束回撤区供复盘", tooltip = "开启：回撤区结束后停止向右延伸并变灰；灰框不是当前机会。关闭则直接删除。", group = groupSetup)
-maxExpiredSetupZones = input.int(6, "历史回撤区保留数量", minval = 1, maxval = 20, tooltip = "只保留最近几个已结束回撤区，避免 1 分钟图堆满灰框；仅在上方复盘开关开启时生效。", group = groupSetup)
-showSetupSignals = input.bool(true, "显示候选信号", tooltip = "先在回撤区扫短期点并收回，再由后续趋势 K 线确认。标记是观察信号，不是成交记录。", group = groupSetup)
-setupFibNear = input.float(0.5, "回撤区起点", minval = 0.0, maxval = 1.0, step = 0.001, tooltip = "从摆动终点向起点回撤的比例；0 是终点，1 是起点。两个端点输入顺序可互换。", group = groupSetup)
-setupFibFar = input.float(0.618, "回撤区终点", minval = 0.0, maxval = 1.0, step = 0.001, tooltip = "候选扫荡必须触及两条回撤线之间的价格范围；不是自动挂单价。", group = groupSetup)
-requireNewShortPoint = input.bool(true, "只扫摆动终点后的短期点", tooltip = "扫荡目标须是摆动终点之后形成且在当前 K 线之前已确认的孤立高低点。", group = groupSetup)
-minSweepTicks = input.int(1, "最小刺破跳动数", minval = 1, maxval = 100, tooltip = "扫荡须越过短期高低点至少这么多个最小价格跳动；1 跳由品种的最小报价单位决定。", group = groupSetup)
-minReclaimTicks = input.int(1, "最小收回跳动数", minval = 1, maxval = 100, tooltip = "刺破后，本根 K 线收盘须回到短期点内侧至少这么多个最小价格跳动。", group = groupSetup)
-confirmationBars = input.int(3, "扫荡后确认期限（根）", minval = 1, maxval = 20, tooltip = "扫荡之后最多等待多少根 K 线出现同方向趋势 K 线；不允许扫荡与确认同根完成。", group = groupSetup)
-maxSetupBars = input.int(60, "摆动确认后最长等待（根）", minval = 1, maxval = 500, tooltip = "从顺势摆动实际确认的 K 线起计；超期不再接受扫荡或确认信号。", group = groupSetup)
-minBodyFraction = input.float(0.5, "趋势 K 线最小实体占比", minval = 0.0, maxval = 1.0, step = 0.05, tooltip = "实体长度除以整根 K 线的高低价范围；这是单根推进的量化代理，不是整段趋势动能评分。", group = groupSetup)
-minClosePosition = input.float(0.7, "趋势 K 线收盘位置", minval = 0.5, maxval = 1.0, step = 0.05, tooltip = "多头收盘须位于本根高低区间靠高点的一侧，空头镜像；还要求收盘比前一根向交易方向推进。", group = groupSetup)
-minCloseMoveAtr = input.float(0.0, "最小收盘推进（ATR 倍）", minval = 0.0, maxval = 5.0, step = 0.05, tooltip = "ATR 是近期平均真实波幅。0 表示只要求收盘价比前收盘推进；调高会过滤较小的推进。", group = groupSetup)
-trendAtrLength = input.int(14, "推进 ATR 周期", minval = 1, maxval = 100, tooltip = "计算上方最小推进阈值所用的 ATR 回看 K 线数。", group = groupSetup)
+leftBars = input.int(1, "左侧确认 K 线数", minval = 1, maxval = 20, tooltip = "孤立高点必须高于左侧这些 K 线；孤立低点必须低于它们。", group = groupShort, display = display.none, active = advancedSettings)
+rightBars = input.int(1, "右侧确认 K 线数", minval = 1, maxval = 20, tooltip = "短期点要等右侧这些 K 线收完才确认；图上标记会回绘到极值 K 线。", group = groupShort, display = display.none, active = advancedSettings)
+showShortPoints = input.bool(false, "显示短期点", tooltip = "显示原始孤立高低点；它们不一定都保留在合并后的短期结构线上。默认关闭以突出当前待扫点。", group = groupShort, display = display.none, active = advancedSettings)
+showShortLines = input.bool(true, "显示短期结构线", tooltip = "连接处理连续同类点与内包之后的短期高低点。", group = groupShort, display = display.none, active = advancedSettings)
+shortContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "内包指后一个高低区间落在前一个区间内。严格模式不允许碰边，含边界模式允许相等；这里只整理短期折线。", group = groupShort, display = display.none, active = advancedSettings)
 
-groupAlerts = "区域到价提醒"
-alertSetupTouch = input.bool(true, "提醒：进入回撤区", tooltip = "当前有效中期回撤区首次到价时提醒，不要求完成扫荡确认。", group = groupAlerts)
-alertObTouch = input.bool(true, "提醒：进入 OB", tooltip = "只提醒已启用、符合当前显示过滤的活跃 OB；灰色历史框不提醒。", group = groupAlerts)
-alertFvgTouch = input.bool(true, "提醒：进入 FVG", tooltip = "只提醒已启用、符合当前显示过滤的活跃 FVG；首次触及失效模式下，会先提醒再收起区域。", group = groupAlerts)
-touchAlertTiming = input.string("即时到价", "提醒时机", options = ["即时到价", "收盘检查"], tooltip = "即时到价：实时最新价格进入区域即提醒。收盘检查：收盘时检查整根 K 线是否触及。同一区域只提醒一次；跳空直接越过区域不视为即时到价。更新脚本或设置后需重新创建 TradingView 提醒，条件选择任何 alert() 函数调用。", group = groupAlerts)
+startTime = input.time(timestamp("01 Jan 2020 00:00 +0000"), "趋势起始时间", tooltip = "只用此时间之后形成的短期点建立中期候选结构；不是交易入场时间。", group = groupMid, display = display.none, active = advancedSettings)
+breakMode = input.string("影线", "突破依据", options = ["影线", "收盘价"], tooltip = "影线：最高/最低价刺破就算结构突破；收盘价：必须收在边界外。两者都不要求后续 K 线跟进。", group = groupMid, display = display.none, active = advancedSettings)
+midContainment = input.string("严格内包", "内包处理", options = ["严格内包", "含边界内包", "关闭"], tooltip = "内包是后一个高低区间落在前一个区间之内。这里只整理中期折线，不改变原始短期点。", group = groupMid, display = display.none, active = advancedSettings)
 
-groupBreakZones = "结构突破候选区"
-showObCandidates = input.bool(false, "显示突破前反向 K 线区域", tooltip = "OB 候选：中期恢复突破前最近的反向 K 线高低价区间。只是图形线索，不证明存在机构订单。", group = groupBreakZones)
-obLookback = input.int(10, "反向 K 线回看根数", minval = 1, maxval = 50, tooltip = "从突破 K 线向前最多查找多少根，取最近一根反向 K 线作为 OB 候选来源。", group = groupBreakZones)
-showFvgCandidates = input.bool(false, "显示三 K 线缺口", tooltip = "FVG 候选：只在中期恢复突破附近查找第一根与第三根 K 线高低范围不重叠的缺口；不对每个短期点单独画区，也不等于所有失衡。", group = groupBreakZones)
-onlyOverlappingBreakZones = input.bool(false, "只显示与当前回撤区重合的同向区域", tooltip = "默认关闭：启用 OB/FVG 后可查看全部仍有效的候选区。开启时只显示与当前有效中期回撤区价格重叠、方向一致的区域；其他区域仍按原规则跟踪失效，但暂时隐藏。", group = groupBreakZones)
-fvgLookback = input.int(3, "缺口回看根数", minval = 1, maxval = 10, tooltip = "突破时从当前 K 线向前查找最近几组三 K 线缺口；已按所选失效口径回补的缺口不标。", group = groupBreakZones)
-minFvgTicks = input.int(1, "缺口最小跳动数", minval = 1, maxval = 100, tooltip = "三 K 线缺口至少宽多少个品种最小价格跳动。", group = groupBreakZones)
-obInvalidMode = input.string("收盘价", "反向 K 线区失效依据", options = ["影线", "收盘价"], tooltip = "多头 OB 候选以区域下边界为远端，空头以上边界为远端。影线模式触及即失效；收盘价模式要求收在远端外。", group = groupBreakZones)
-fvgFillMode = input.string("完全回补", "缺口失效依据", options = ["完全回补", "首次触及"], tooltip = "完全回补：价格走到缺口远端才失效；首次触及：一碰到缺口近端就失效。", group = groupBreakZones)
-maxZoneBars = input.int(60, "候选区最长有效期（根）", minval = 1, maxval = 500, tooltip = "从中期突破确认、候选区被创建时起计；超过期限后不再显示为活跃区。", group = groupBreakZones)
-replaceSameSideZone = input.bool(true, "同向新区替换旧区", tooltip = "新多头/空头 OB 或 FVG 候选出现时，让同类同方向旧区失效，减少重叠。", group = groupBreakZones)
-keepExpiredZones = input.bool(false, "保留失效区域供复盘", tooltip = "关闭：失效方框直接删除。开启：停止延伸并变灰，仅作历史复盘，不能当作当前有效区域。", group = groupBreakZones)
-maxCandidateZones = input.int(4, "每类最多活跃区域数", minval = 1, maxval = 30, tooltip = "OB 与 FVG 分别计数；超过上限时最旧活跃区失效。", group = groupBreakZones)
-maxExpiredZones = input.int(20, "每类最多保留历史区域数", minval = 1, maxval = 50, tooltip = "仅在保留失效区域开启时生效；OB 与 FVG 分别计数，超额删除最旧历史框。", group = groupBreakZones)
+retireAfterMissedTouch = input.bool(true, "触区后顺势离开即结束", tooltip = "回撤区曾被影线或实体触及后，若收盘顺势离开区域且没有等待确认的扫荡，就结束本次候选机会。关闭可允许之后再次回到区域。", group = groupSetup, display = display.none, active = advancedSettings)
+setupFibNear = input.float(0.5, "回撤区起点", minval = 0.0, maxval = 1.0, step = 0.001, tooltip = "从摆动终点向起点回撤的比例；0 是终点，1 是起点。两个端点输入顺序可互换。", group = groupSetup, display = display.none, active = advancedSettings)
+setupFibFar = input.float(0.618, "回撤区终点", minval = 0.0, maxval = 1.0, step = 0.001, tooltip = "候选扫荡必须触及两条回撤线之间的价格范围；不是自动挂单价。", group = groupSetup, display = display.none, active = advancedSettings)
+requireNewShortPoint = input.bool(true, "只扫摆动终点后的短期点", tooltip = "扫荡目标须是摆动终点之后形成且在当前 K 线之前已确认的孤立高低点。", group = groupSetup, display = display.none, active = advancedSettings)
+minSweepTicks = input.int(1, "最小刺破跳动数", minval = 1, maxval = 100, tooltip = "扫荡须越过短期高低点至少这么多个最小价格跳动；1 跳由品种的最小报价单位决定。", group = groupSetup, display = display.none, active = advancedSettings)
+minReclaimTicks = input.int(1, "最小收回跳动数", minval = 1, maxval = 100, tooltip = "刺破后，本根 K 线收盘须回到短期点内侧至少这么多个最小价格跳动。", group = groupSetup, display = display.none, active = advancedSettings)
+confirmationBars = input.int(3, "扫荡后确认期限（根）", minval = 1, maxval = 20, tooltip = "扫荡之后最多等待多少根 K 线出现同方向趋势 K 线；不允许扫荡与确认同根完成。", group = groupSetup, display = display.none, active = advancedSettings)
+maxSetupBars = input.int(60, "摆动确认后最长等待（根）", minval = 1, maxval = 500, tooltip = "从顺势摆动实际确认的 K 线起计；超期不再接受扫荡或确认信号。", group = groupSetup, display = display.none, active = advancedSettings)
+
+minBodyFraction = input.float(0.5, "趋势 K 线最小实体占比", minval = 0.0, maxval = 1.0, step = 0.05, tooltip = "实体长度除以整根 K 线的高低价范围；这是单根推进的量化代理，不是整段趋势动能评分。", group = groupMomentum, display = display.none, active = advancedSettings)
+minClosePosition = input.float(0.7, "趋势 K 线收盘位置", minval = 0.5, maxval = 1.0, step = 0.05, tooltip = "多头收盘须位于本根高低区间靠高点的一侧，空头镜像；还要求收盘比前一根向交易方向推进。", group = groupMomentum, display = display.none, active = advancedSettings)
+minCloseMoveAtr = input.float(0.0, "最小收盘推进（ATR 倍）", minval = 0.0, maxval = 5.0, step = 0.05, tooltip = "ATR 是近期平均真实波幅。0 表示只要求收盘价比前收盘推进；调高会过滤较小的推进。", group = groupMomentum, display = display.none, active = advancedSettings)
+trendAtrLength = input.int(14, "推进 ATR 周期", minval = 1, maxval = 100, tooltip = "计算上方最小推进阈值所用的 ATR 回看 K 线数。", group = groupMomentum, display = display.none, active = advancedSettings)
+
+obLookback = input.int(10, "反向 K 线回看根数", minval = 1, maxval = 50, tooltip = "从突破 K 线向前最多查找多少根，取最近一根反向 K 线作为 OB 候选来源。", group = groupBreakZones, display = display.none, active = advancedSettings)
+fvgLookback = input.int(3, "缺口回看根数", minval = 1, maxval = 10, tooltip = "突破时从当前 K 线向前查找最近几组三 K 线缺口；已按所选失效口径回补的缺口不标。", group = groupBreakZones, display = display.none, active = advancedSettings)
+minFvgTicks = input.int(1, "缺口最小跳动数", minval = 1, maxval = 100, tooltip = "三 K 线缺口至少宽多少个品种最小价格跳动。", group = groupBreakZones, display = display.none, active = advancedSettings)
+obInvalidMode = input.string("收盘价", "反向 K 线区失效依据", options = ["影线", "收盘价"], tooltip = "多头 OB 候选以区域下边界为远端，空头以上边界为远端。影线模式触及即失效；收盘价模式要求收在远端外。", group = groupBreakZones, display = display.none, active = advancedSettings)
+fvgFillMode = input.string("完全回补", "缺口失效依据", options = ["完全回补", "首次触及"], tooltip = "完全回补：价格走到缺口远端才失效；首次触及：一碰到缺口近端就失效。", group = groupBreakZones, display = display.none, active = advancedSettings)
+maxZoneBars = input.int(60, "候选区最长有效期（根）", minval = 1, maxval = 500, tooltip = "从中期突破确认、候选区被创建时起计；超过期限后不再显示为活跃区。", group = groupBreakZones, display = display.none, active = advancedSettings)
+replaceSameSideZone = input.bool(true, "同向新区替换旧区", tooltip = "新多头/空头 OB 或 FVG 候选出现时，让同类同方向旧区失效，减少重叠。", group = groupBreakZones, display = display.none, active = advancedSettings)
+
+keepExpiredSetupZones = input.bool(true, "保留已结束回撤区供复盘", tooltip = "开启：回撤区结束后停止向右延伸并变灰；灰框不是当前机会。关闭则直接删除。", group = groupHistory, display = display.none, active = advancedSettings)
+maxExpiredSetupZones = input.int(6, "历史回撤区保留数量", minval = 1, maxval = 20, tooltip = "只保留最近几个已结束回撤区，避免 1 分钟图堆满灰框；仅在上方复盘开关开启时生效。", group = groupHistory, display = display.none, active = advancedSettings)
+keepExpiredZones = input.bool(false, "保留失效区域供复盘", tooltip = "关闭：失效方框直接删除。开启：停止延伸并变灰，仅作历史复盘，不能当作当前有效区域。", group = groupHistory, display = display.none, active = advancedSettings)
+maxCandidateZones = input.int(4, "每类最多活跃区域数", minval = 1, maxval = 30, tooltip = "OB 与 FVG 分别计数；超过上限时最旧活跃区失效。", group = groupHistory, display = display.none, active = advancedSettings)
+maxExpiredZones = input.int(20, "每类最多保留历史区域数", minval = 1, maxval = 50, tooltip = "仅在保留失效区域开启时生效；OB 与 FVG 分别计数，超额删除最旧历史框。", group = groupHistory, display = display.none, active = advancedSettings)
+
+showMidFib = input.bool(false, "显示最近一段摆动参考位", tooltip = "灰色虚线按最后一段中期折线绘制；0 是摆动终点，1 是起点，只表示结构参考，不表示做多或做空。默认关闭以减少重叠。", group = groupFib, display = display.none, active = advancedSettings)
+showTradeFib = input.bool(false, "显示顺势交易回撤位", tooltip = "显示已确认中期顺势摆动的 0.618、0.786 参考线。与下方候选回撤区通常二选一显示，避免 0.618 附近重叠；关闭此线不影响回撤扫荡信号。", group = groupFib, display = display.none, active = advancedSettings)
+fibLongColor = input.color(color.teal, "顺势多头颜色", group = groupFib, display = display.none, active = advancedSettings)
+fibShortColor = input.color(color.red, "顺势空头颜色", group = groupFib, display = display.none, active = advancedSettings)
 
 shortColor = color.new(color.teal, 15)
 midColor = color.rgb(194, 64, 55)
@@ -146,7 +154,7 @@ recordMidPoint(array<int> types, array<float> prices, array<int> times, int poin
         array.shift(times)
     array.size(times)
 
-retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int position, bool keepHistory, int historyLimit, int endTime) =>
+retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int position, bool keepHistory, int historyLimit, int endTime, string kind) =>
     box candidate = array.remove(zones, position)
     array.remove(sides, position)
     array.remove(bornBars, position)
@@ -156,6 +164,9 @@ retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, arr
         box.set_border_color(candidate, color.new(color.gray, 65))
         box.set_bgcolor(candidate, color.new(color.gray, 93))
         box.set_text_color(candidate, color.gray)
+        box.set_border_width(candidate, 1)
+        box.set_border_style(candidate, line.style_dotted)
+        box.set_text(candidate, "已失效 " + kind)
         array.push(history, candidate)
         if array.size(history) > historyLimit
             box.delete(array.shift(history))
@@ -163,10 +174,18 @@ retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, arr
         box.delete(candidate)
     array.size(zones)
 
-styleCandidateZone(box candidate, color zoneColor, bool visible) =>
-    box.set_border_color(candidate, color.new(zoneColor, visible ? 45 : 100))
-    box.set_bgcolor(candidate, color.new(zoneColor, visible ? 92 : 100))
-    box.set_text_color(candidate, color.new(color.black, visible ? 0 : 100))
+zoneDirectionText(string kind, int side, int referenceSide) =>
+    referenceSide == 0 ? (side == 1 ? "多头 " : "空头 ") + kind + " · 方向未确认" : side == referenceSide ? (side == 1 ? "顺势多 " : "顺势空 ") + kind : "逆势 " + kind + (side == 1 ? " · 支撑" : " · 阻力")
+
+styleCandidateZone(box candidate, color zoneColor, bool visible, string kind, int side, int referenceSide) =>
+    bool aligned = referenceSide != 0 and side == referenceSide
+    color stroke = referenceSide == 0 ? color.gray : zoneColor
+    box.set_border_color(candidate, color.new(stroke, visible ? (aligned ? 10 : 65) : 100))
+    box.set_bgcolor(candidate, color.new(stroke, visible ? (aligned ? 87 : 96) : 100))
+    box.set_border_width(candidate, aligned ? 2 : 1)
+    box.set_border_style(candidate, aligned ? line.style_solid : line.style_dashed)
+    box.set_text(candidate, zoneDirectionText(kind, side, referenceSide))
+    box.set_text_color(candidate, color.new(referenceSide == 0 ? color.gray : color.black, visible ? (aligned ? 0 : 35) : 100))
     visible
 
 // varip keys survive realtime rollback, so one zone cannot notify on every tick.
@@ -196,18 +215,18 @@ candidateTouchMessage(array<box> zones, array<int> sides, array<int> bornBars, a
             if visible and not reversed and not expired and bar_index > array.get(bornBars, i) and touchesAlertZone(top, bottom, closeCheck)
                 string key = kind + ":" + str.tostring(array.get(bornBars, i)) + ":" + str.tostring(box.get_left(zone)) + ":" + str.tostring(side)
                 if rememberTouch(keys, key)
-                    message += (side == 1 ? "多头 " : "空头 ") + kind + " 到价 [" + str.tostring(bottom, format.mintick) + ", " + str.tostring(top, format.mintick) + "]\n"
+                    message += zoneDirectionText(kind, side, setupSide) + " 到价 [" + str.tostring(bottom, format.mintick) + ", " + str.tostring(top, format.mintick) + "]\n"
     message
 
-addCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int leftTime, float zoneTop, int rightTime, float zoneBottom, color zoneColor, string zoneName, int side, int activeLimit, bool keepHistory, int historyLimit, bool visible) =>
+addCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int leftTime, float zoneTop, int rightTime, float zoneBottom, color zoneColor, string zoneName, int side, int activeLimit, bool keepHistory, int historyLimit, bool visible, int referenceSide) =>
     box candidate = box.new(leftTime, zoneTop, rightTime, zoneBottom, xloc = xloc.bar_time, border_color = color.new(zoneColor, 45), bgcolor = color.new(zoneColor, 92), text = zoneName, text_color = color.black, text_size = size.tiny, text_halign = text.align_right, text_valign = text.align_top)
-    styleCandidateZone(candidate, zoneColor, visible)
+    styleCandidateZone(candidate, zoneColor, visible, zoneName, side, referenceSide)
     array.push(zones, candidate)
     array.push(sides, side)
     array.push(bornBars, bar_index)
     array.push(seen, visible)
     if array.size(zones) > activeLimit
-        retireCandidateZone(zones, sides, bornBars, seen, history, 0, keepHistory, historyLimit, rightTime)
+        retireCandidateZone(zones, sides, bornBars, seen, history, 0, keepHistory, historyLimit, rightTime, zoneName)
     array.size(zones)
 
 updateCandidateZones(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, bool isFvg, string obMode, string fvgMode, int ageLimit, bool breakUp, bool breakDown, bool keepHistory, int historyLimit, int endTime, bool overlapOnly, bool setupIsActive, int setupSide, float setupTopPrice, float setupBottomPrice) =>
@@ -231,22 +250,22 @@ updateCandidateZones(array<box> zones, array<int> sides, array<int> bornBars, ar
                 crossed := obMode == "影线" ? high >= top : close > top
         bool expired = bar_index - array.get(bornBars, position) > ageLimit
         if barstate.isconfirmed and (reversed or crossed or expired)
-            retireCandidateZone(zones, sides, bornBars, seen, history, position, keepHistory, historyLimit, endTime)
+            retireCandidateZone(zones, sides, bornBars, seen, history, position, keepHistory, historyLimit, endTime, isFvg ? "FVG" : "OB")
         else
             box.set_right(candidate, endTime)
             color zoneColor = isFvg ? (side == 1 ? color.lime : color.orange) : (side == 1 ? fibLongColor : fibShortColor)
             bool visible = not overlapOnly or (setupIsActive and side == setupSide and top >= setupBottomPrice and bottom <= setupTopPrice)
-            styleCandidateZone(candidate, zoneColor, visible)
+            styleCandidateZone(candidate, zoneColor, visible, isFvg ? "FVG" : "OB", side, setupSide)
             if visible
                 array.set(seen, position, true)
         position -= 1
     array.size(zones)
 
-retireSameSideZones(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int side, bool keepHistory, int historyLimit, int endTime) =>
+retireSameSideZones(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int side, bool keepHistory, int historyLimit, int endTime, string kind) =>
     int position = array.size(zones) - 1
     while position >= 0
         if array.get(sides, position) == side
-            retireCandidateZone(zones, sides, bornBars, seen, history, position, keepHistory, historyLimit, endTime)
+            retireCandidateZone(zones, sides, bornBars, seen, history, position, keepHistory, historyLimit, endTime, kind)
         position -= 1
     array.size(zones)
 
@@ -656,9 +675,9 @@ if midBreakUp or midBreakDown
             bool obAlreadyInvalid = breakSide == 1 ? (obInvalidMode == "影线" ? low <= low[obOffset] : close < low[obOffset]) : (obInvalidMode == "影线" ? high >= high[obOffset] : close > high[obOffset])
             if not obAlreadyInvalid
                 if replaceSameSideZone
-                    retireSameSideZones(obZones, obZoneSides, obZoneBornBars, obZoneSeen, obZoneHistory, breakSide, keepExpiredZones, maxExpiredZones, time)
+                    retireSameSideZones(obZones, obZoneSides, obZoneBornBars, obZoneSeen, obZoneHistory, breakSide, keepExpiredZones, maxExpiredZones, time, "OB")
                 bool showOb = not onlyOverlappingBreakZones or (setupActive and breakSide == tradeSide and high[obOffset] >= setupBottom and low[obOffset] <= setupTop)
-                addCandidateZone(obZones, obZoneSides, obZoneBornBars, obZoneSeen, obZoneHistory, time[obOffset], high[obOffset], time, low[obOffset], breakSide == 1 ? fibLongColor : fibShortColor, "OB", breakSide, maxCandidateZones, keepExpiredZones, maxExpiredZones, showOb)
+                addCandidateZone(obZones, obZoneSides, obZoneBornBars, obZoneSeen, obZoneHistory, time[obOffset], high[obOffset], time, low[obOffset], breakSide == 1 ? fibLongColor : fibShortColor, "OB", breakSide, maxCandidateZones, keepExpiredZones, maxExpiredZones, showOb, tradeSide)
     if showFvgCandidates
         int fvgOffset = na
         for i = 0 to fvgLookback - 1
@@ -674,9 +693,9 @@ if midBreakUp or midBreakDown
             float fvgTop = breakSide == 1 ? low[fvgOffset] : low[fvgOffset + 2]
             float fvgBottom = breakSide == 1 ? high[fvgOffset + 2] : high[fvgOffset]
             if replaceSameSideZone
-                retireSameSideZones(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneSeen, fvgZoneHistory, breakSide, keepExpiredZones, maxExpiredZones, time)
+                retireSameSideZones(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneSeen, fvgZoneHistory, breakSide, keepExpiredZones, maxExpiredZones, time, "FVG")
             bool showFvg = not onlyOverlappingBreakZones or (setupActive and breakSide == tradeSide and fvgTop >= setupBottom and fvgBottom <= setupTop)
-            addCandidateZone(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneSeen, fvgZoneHistory, time[fvgOffset + 2], fvgTop, time, fvgBottom, breakSide == 1 ? color.lime : color.orange, "FVG", breakSide, maxCandidateZones, keepExpiredZones, maxExpiredZones, showFvg)
+            addCandidateZone(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneSeen, fvgZoneHistory, time[fvgOffset + 2], fvgTop, time, fvgBottom, breakSide == 1 ? color.lime : color.orange, "FVG", breakSide, maxCandidateZones, keepExpiredZones, maxExpiredZones, showFvg, tradeSide)
 
 // Labels are created only for pivots surviving same-type and containment
 // processing, so the chart and the medium structure line describe the same points.
