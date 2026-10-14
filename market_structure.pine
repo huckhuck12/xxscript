@@ -154,6 +154,9 @@ recordMidPoint(array<int> types, array<float> prices, array<int> times, int poin
         array.shift(times)
     array.size(times)
 
+zonePriceText(float top, float bottom) =>
+    "\n上沿 " + str.tostring(top, format.mintick) + "  下沿 " + str.tostring(bottom, format.mintick)
+
 retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int position, bool keepHistory, int historyLimit, int endTime, string kind) =>
     box candidate = array.remove(zones, position)
     array.remove(sides, position)
@@ -166,7 +169,7 @@ retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, arr
         box.set_text_color(candidate, color.gray)
         box.set_border_width(candidate, 1)
         box.set_border_style(candidate, line.style_dotted)
-        box.set_text(candidate, "已失效 " + kind)
+        box.set_text(candidate, "已失效 " + kind + zonePriceText(box.get_top(candidate), box.get_bottom(candidate)))
         array.push(history, candidate)
         if array.size(history) > historyLimit
             box.delete(array.shift(history))
@@ -184,7 +187,7 @@ styleCandidateZone(box candidate, color zoneColor, bool visible, string kind, in
     box.set_bgcolor(candidate, color.new(stroke, visible ? (aligned ? 87 : 96) : 100))
     box.set_border_width(candidate, aligned ? 2 : 1)
     box.set_border_style(candidate, aligned ? line.style_solid : line.style_dashed)
-    box.set_text(candidate, zoneDirectionText(kind, side, referenceSide))
+    box.set_text(candidate, zoneDirectionText(kind, side, referenceSide) + zonePriceText(box.get_top(candidate), box.get_bottom(candidate)))
     box.set_text_color(candidate, color.new(referenceSide == 0 ? color.gray : color.black, visible ? (aligned ? 0 : 35) : 100))
     visible
 
@@ -636,7 +639,7 @@ else if not na(sweepTargetLine)
 if showSetupZone and setupActive and not longSetupSignal and not shortSetupSignal
     color zoneColor = tradeSide == 1 ? fibLongColor : fibShortColor
     if na(setupZone)
-        setupZone := box.new(tradeConfirmedTime, setupTop, time, setupBottom, xloc = xloc.bar_time, extend = extend.right, border_color = color.new(zoneColor, 50), bgcolor = color.new(zoneColor, 92), text = "回撤", text_color = color.black, text_size = size.tiny, text_halign = text.align_right, text_valign = text.align_top)
+        setupZone := box.new(tradeConfirmedTime, setupTop, time, setupBottom, xloc = xloc.bar_time, extend = extend.right, border_color = color.new(zoneColor, 50), bgcolor = color.new(zoneColor, 92), text = "回撤" + zonePriceText(setupTop, setupBottom), text_color = color.black, text_size = size.tiny, text_halign = text.align_right, text_valign = text.align_top)
     else
         box.set_left(setupZone, tradeConfirmedTime)
         box.set_right(setupZone, time)
@@ -644,6 +647,7 @@ if showSetupZone and setupActive and not longSetupSignal and not shortSetupSigna
         box.set_bottom(setupZone, setupBottom)
         box.set_border_color(setupZone, color.new(zoneColor, 50))
         box.set_bgcolor(setupZone, color.new(zoneColor, 92))
+        box.set_text(setupZone, "回撤" + zonePriceText(setupTop, setupBottom))
 else if not na(setupZone)
     if keepExpiredSetupZones
         box.set_extend(setupZone, extend.none)
@@ -651,6 +655,7 @@ else if not na(setupZone)
         box.set_border_color(setupZone, color.new(color.gray, 65))
         box.set_bgcolor(setupZone, color.new(color.gray, 93))
         box.set_text_color(setupZone, color.gray)
+        box.set_text(setupZone, "已结束 回撤" + zonePriceText(box.get_top(setupZone), box.get_bottom(setupZone)))
         array.push(setupZoneHistory, setupZone)
         if array.size(setupZoneHistory) > maxExpiredSetupZones
             box.delete(array.shift(setupZoneHistory))
