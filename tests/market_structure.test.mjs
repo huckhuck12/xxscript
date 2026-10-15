@@ -381,7 +381,8 @@ assert.match(pine, /if showTradeFib and tradeDirectionAllowed/, "trade reference
 assert.match(pine, /if not setupActive\s+pendingSweepSide := 0\s+pendingSweepBar := na/, "direction disagreement clears a pending sweep rather than releasing a stale confirmation later");
 assert.match(pine, /EMA同向多/, "EMA zone wording does not claim confirmed medium structure");
 assert.match(pine, /bool showStructureVisuals = directionMethod != "高周期 EMA"/, "EMA direction automatically hides medium structure visuals");
-assert.match(pine, /plot\(not showStructureVisuals and emaDirectionReady \? directionEma : na, "方向 EMA（参考周期已收盘）".*style = plot\.style_stepline\)/, "EMA overlay uses the same confirmed value as the direction filter and holds it as steps");
+assert.match(pine, /bool emaPlotPoint = timeframe\.change\(directionEmaTimeframe\) or barstate\.islast/, "EMA line connects confirmed update points and extends to the current bar");
+assert.match(pine, /plot\(not showStructureVisuals and emaDirectionReady and emaPlotPoint \? directionEma : na, "方向 EMA（参考周期已收盘）".*style = plot\.style_line\)/, "EMA overlay connects confirmed samples without changing the direction input");
 assert.match(pine, /midColor, 2, showMidLines and showStructureVisuals, midContainment/, "medium lines respect EMA presentation mode");
 for (const condition of [
   "showMidPoints and array.size(midTimes) > 0",

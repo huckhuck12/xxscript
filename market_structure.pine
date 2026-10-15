@@ -13,7 +13,7 @@ groupFib = "高级 · 参考线与颜色"
 advancedSettings = input.bool(false, "启用高级参数调整", tooltip = "日常只需调整常用显示、方向和提醒。高级参数保留当前值，开启后才可编辑；并非隐藏参数。区域标注区分暂定方向和严格确认方向，灰色历史框不代表当前机会。", group = groupCommon, display = display.none)
 showDirectionStatus = input.bool(true, "显示方向状态", tooltip = "右上角显示所选方向来源和结果。结构分级模式先给暂偏方向，严格确认后升级；EMA 模式只表示所选参考周期已收盘均线的斜率。暂定方向不提前触发回撤信号。", group = groupCommon, display = display.none)
 directionMethod = input.string("中期结构（分级）", "方向判断方式", options = ["中期结构（分级）", "中期结构（严格）", "高周期 EMA"], tooltip = "分级：保留暂偏方向与严格确认，区域入场可用暂偏方向。严格：只用严格确认方向，中性不放行。EMA：比较最近两根已收盘参考周期 EMA 的斜率，相等为中性；参考周期必须大于当前标准时间图周期。统一用于方向状态、区域标注、入场候选与通知。斐波那契回撤区和原回撤扫荡信号仍需严格中期摆动，且与所选方向一致；不改变 OB/FVG 生成或失效规则。趋势模式仍控制中期结构算法，比较方向时建议使用自动/双向。", group = groupCommon, display = display.none)
-directionEmaTimeframe = input.timeframe("5", "EMA 参考周期", tooltip = "仅用于高周期 EMA 方向，须大于当前图表周期。例如 1 分钟图可选 5 分钟，3 分钟图可选 15 分钟。EMA 模式自动绘制用于判断方向的已收盘 EMA 阶梯线，并隐藏中期点线、结构切换标记及中期斐波那契辅助图形；计算和区域信号仍保留。切换图表周期后请检查此项；不会自动调整。不支持时显示中性且不画 EMA。", group = groupCommon, display = display.none)
+directionEmaTimeframe = input.timeframe("5", "EMA 参考周期", tooltip = "仅用于高周期 EMA 方向，须大于当前图表周期。例如 1 分钟图可选 5 分钟，3 分钟图可选 15 分钟。EMA 模式将各次已收盘 EMA 更新点连成折线；连接段只是视觉连线，方向仍使用最新已确认值。自动隐藏中期结构及斐波那契辅助图形，保留计算和区域信号。切换图表周期后请检查此项，不会自动调整。不支持时显示中性且不画 EMA。", group = groupCommon, display = display.none)
 directionEmaLength = input.int(50, "方向 EMA 长度", minval = 1, maxval = 500, tooltip = "所选参考周期上的 EMA 长度，默认 50。EMA 上升偏多、下降偏空，不附加价格位于均线上下的条件；只使用已收盘参考周期值。高周期 EMA 不等同于按时间倍数换算的低周期 EMA。", group = groupMid, display = display.none, active = advancedSettings)
 
 trendMode = input.string("自动/双向", "趋势模式", options = ["上涨", "下跌", "自动/双向"], tooltip = "上涨或下跌只运行对应的中期确认规则；自动/双向同时维护两套候选，并按所选突破依据触发方向切换。方向切换不代表突破已站稳。", group = groupCommon, display = display.none)
@@ -628,7 +628,10 @@ int confirmedObservationSide = tradeSide != 0 and not biasInvalidated and (biasS
 bool emaDirectionSupported = chart.is_standard and not timeframe.isticks and timeframe.in_seconds() < timeframe.in_seconds(directionEmaTimeframe)
 bool emaDirectionReady = emaDirectionSupported and not na(directionEma) and not na(directionEmaPrevious)
 int emaObservationSide = not emaDirectionReady ? 0 : directionEma > directionEmaPrevious ? 1 : directionEma < directionEmaPrevious ? -1 : 0
-plot(not showStructureVisuals and emaDirectionReady ? directionEma : na, "方向 EMA（参考周期已收盘）", color = emaObservationSide == 1 ? fibLongColor : emaObservationSide == -1 ? fibShortColor : color.gray, linewidth = 2, style = plot.style_stepline)
+// Connect confirmed update points rather than drawing repeated horizontal steps.
+// Intermediate line segments are visual interpolation, never direction inputs.
+bool emaPlotPoint = timeframe.change(directionEmaTimeframe) or barstate.islast
+plot(not showStructureVisuals and emaDirectionReady and emaPlotPoint ? directionEma : na, "方向 EMA（参考周期已收盘）", color = emaObservationSide == 1 ? fibLongColor : emaObservationSide == -1 ? fibShortColor : color.gray, linewidth = 2, style = plot.style_line)
 int observationSide = directionMethod == "高周期 EMA" ? emaObservationSide : directionMethod == "中期结构（严格）" ? confirmedObservationSide : confirmedObservationSide != 0 ? confirmedObservationSide : biasSide
 bool observationConfirmed = directionMethod == "高周期 EMA" ? emaDirectionReady and emaObservationSide != 0 : confirmedObservationSide != 0
 bool tradeDirectionAllowed = confirmedObservationSide != 0 and observationSide == tradeSide
