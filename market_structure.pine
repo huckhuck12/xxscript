@@ -13,7 +13,7 @@ groupFib = "高级 · 参考线与颜色"
 advancedSettings = input.bool(false, "启用高级参数调整", tooltip = "日常只需调整常用显示、方向和提醒。高级参数保留当前值，开启后才可编辑；并非隐藏参数。区域标注区分暂定方向和严格确认方向，灰色历史框不代表当前机会。", group = groupCommon, display = display.none)
 showDirectionStatus = input.bool(true, "显示方向状态", tooltip = "右上角显示所选方向来源和结果。结构分级模式先给暂偏方向，严格确认后升级；EMA 模式只表示所选参考周期已收盘均线的斜率。暂定方向不提前触发回撤信号。", group = groupCommon, display = display.none)
 directionMethod = input.string("中期结构（分级）", "方向判断方式", options = ["中期结构（分级）", "中期结构（严格）", "高周期 EMA"], tooltip = "分级：保留暂偏方向与严格确认，区域入场可用暂偏方向。严格：只用严格确认方向，中性不放行。EMA：比较最近两根已收盘参考周期 EMA 的斜率，相等为中性；参考周期必须大于当前标准时间图周期。统一用于方向状态、区域标注、入场候选与通知。斐波那契回撤区和原回撤扫荡信号仍需严格中期摆动，且与所选方向一致；不改变 OB/FVG 生成或失效规则。趋势模式仍控制中期结构算法，比较方向时建议使用自动/双向。", group = groupCommon, display = display.none)
-directionEmaTimeframe = input.timeframe("5", "EMA 参考周期", tooltip = "仅用于高周期 EMA 方向，须大于当前图表周期。例如 1 分钟图可选 5 分钟，3 分钟图可选 15 分钟。切换图表周期后请检查此项；不会自动调整。不支持时显示中性。", group = groupCommon, display = display.none)
+directionEmaTimeframe = input.timeframe("5", "EMA 参考周期", tooltip = "仅用于高周期 EMA 方向，须大于当前图表周期。例如 1 分钟图可选 5 分钟，3 分钟图可选 15 分钟。EMA 模式自动绘制用于判断方向的已收盘 EMA 阶梯线，并隐藏中期点线、结构切换标记及中期斐波那契辅助图形；计算和区域信号仍保留。切换图表周期后请检查此项；不会自动调整。不支持时显示中性且不画 EMA。", group = groupCommon, display = display.none)
 directionEmaLength = input.int(50, "方向 EMA 长度", minval = 1, maxval = 500, tooltip = "所选参考周期上的 EMA 长度，默认 50。EMA 上升偏多、下降偏空，不附加价格位于均线上下的条件；只使用已收盘参考周期值。高周期 EMA 不等同于按时间倍数换算的低周期 EMA。", group = groupMid, display = display.none, active = advancedSettings)
 
 trendMode = input.string("自动/双向", "趋势模式", options = ["上涨", "下跌", "自动/双向"], tooltip = "上涨或下跌只运行对应的中期确认规则；自动/双向同时维护两套候选，并按所选突破依据触发方向切换。方向切换不代表突破已站稳。", group = groupCommon, display = display.none)
@@ -81,6 +81,8 @@ fibShortColor = input.color(color.red, "顺势空头颜色", group = groupFib, d
 
 shortColor = color.new(color.teal, 15)
 midColor = color.rgb(194, 64, 55)
+// Direction source controls presentation only; medium structure still generates zones.
+bool showStructureVisuals = directionMethod != "高周期 EMA"
 ph = ta.pivothigh(high, leftBars, rightBars)
 pl = ta.pivotlow(low, leftBars, rightBars)
 leftHigh = ta.highest(high[rightBars + 1], leftBars)
@@ -626,6 +628,7 @@ int confirmedObservationSide = tradeSide != 0 and not biasInvalidated and (biasS
 bool emaDirectionSupported = chart.is_standard and not timeframe.isticks and timeframe.in_seconds() < timeframe.in_seconds(directionEmaTimeframe)
 bool emaDirectionReady = emaDirectionSupported and not na(directionEma) and not na(directionEmaPrevious)
 int emaObservationSide = not emaDirectionReady ? 0 : directionEma > directionEmaPrevious ? 1 : directionEma < directionEmaPrevious ? -1 : 0
+plot(not showStructureVisuals and emaDirectionReady ? directionEma : na, "方向 EMA（参考周期已收盘）", color = emaObservationSide == 1 ? fibLongColor : emaObservationSide == -1 ? fibShortColor : color.gray, linewidth = 2, style = plot.style_stepline)
 int observationSide = directionMethod == "高周期 EMA" ? emaObservationSide : directionMethod == "中期结构（严格）" ? confirmedObservationSide : confirmedObservationSide != 0 ? confirmedObservationSide : biasSide
 bool observationConfirmed = directionMethod == "高周期 EMA" ? emaDirectionReady and emaObservationSide != 0 : confirmedObservationSide != 0
 bool tradeDirectionAllowed = confirmedObservationSide != 0 and observationSide == tradeSide
@@ -696,7 +699,7 @@ if barstate.isconfirmed and setupActive and bar_index > tradeConfirmedBar
             consumedSwingBar := tradeConfirmedBar
             setupActive := false
 
-if showSetupInvalidation and setupActive
+if showSetupInvalidation and setupActive and showStructureVisuals
     if na(setupInvalidationLine)
         setupInvalidationLine := line.new(tradeConfirmedTime, tradeSwingStart, time, tradeSwingStart, xloc = xloc.bar_time, color = color.new(color.gray, 35), style = line.style_dotted)
         setupInvalidationLabel := label.new(time, tradeSwingStart, "失效", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.gray, size = size.tiny)
@@ -714,7 +717,7 @@ else if not na(setupInvalidationLine)
 bool hasSweepTarget = tradeSide == 1 ? validSweepLow : validSweepHigh
 float sweepTargetPrice = tradeSide == 1 ? sweepRefLow : sweepRefHigh
 int sweepTargetTime = tradeSide == 1 ? sweepRefLowTime : sweepRefHighTime
-if showSweepTarget and setupActive and hasSweepTarget
+if showSweepTarget and setupActive and hasSweepTarget and showStructureVisuals
     if na(sweepTargetLine)
         sweepTargetLine := line.new(sweepTargetTime, sweepTargetPrice, time, sweepTargetPrice, xloc = xloc.bar_time, color = color.new(color.gray, 25), style = line.style_dashed)
         sweepTargetLabel := label.new(time, sweepTargetPrice, tradeSide == 1 ? "待扫低" : "待扫高", xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.white, 100), textcolor = color.gray, size = size.tiny)
@@ -730,7 +733,7 @@ else if not na(sweepTargetLine)
     sweepTargetLine := na
     sweepTargetLabel := na
 
-if showSetupZone and setupActive and not longSetupSignal and not shortSetupSignal
+if showSetupZone and setupActive and not longSetupSignal and not shortSetupSignal and showStructureVisuals
     color zoneColor = tradeSide == 1 ? fibLongColor : fibShortColor
     if na(setupZone)
         setupZone := box.new(tradeConfirmedTime, setupTop, time, setupBottom, xloc = xloc.bar_time, extend = extend.right, border_color = color.new(zoneColor, 50), bgcolor = color.new(zoneColor, 92), text = "回撤" + zonePriceText(setupTop, setupBottom), text_color = color.black, text_size = size.tiny, text_halign = text.align_right, text_valign = text.align_top)
@@ -837,8 +840,8 @@ if barstate.islast
     array.clear(midLabels)
     if array.size(midEventTimes) > 0
         for i = 0 to array.size(midEventTimes) - 1
-            addPoint(midTypes, midPrices, midTimes, midSegments, array.get(midEventTypes, i), array.get(midEventPrices, i), array.get(midEventTimes, i), midColor, 2, showMidLines, midContainment)
-    if showMidPoints and array.size(midTimes) > 0
+            addPoint(midTypes, midPrices, midTimes, midSegments, array.get(midEventTypes, i), array.get(midEventPrices, i), array.get(midEventTimes, i), midColor, 2, showMidLines and showStructureVisuals, midContainment)
+    if showMidPoints and array.size(midTimes) > 0 and showStructureVisuals
         for i = 0 to array.size(midTimes) - 1
             bool isHigh = array.get(midTypes, i) == 1
             label pointLabel = label.new(array.get(midTimes, i), array.get(midPrices, i), isHigh ? "中高" : "中低", xloc = xloc.bar_time, style = isHigh ? label.style_label_down : label.style_label_up, color = midColor, textcolor = color.white, size = size.tiny)
@@ -847,7 +850,7 @@ if barstate.islast
     // Use the final two retained medium pivots, after containment processing.
     // Retracement starts at the end of the swing: 0 = end, 1 = start.
     int midCount = array.size(midTimes)
-    if showMidFib and midCount >= 2
+    if showMidFib and midCount >= 2 and showStructureVisuals
         float swingStart = array.get(midPrices, midCount - 2)
         float swingEnd = array.get(midPrices, midCount - 1)
         int swingEndTime = array.get(midTimes, midCount - 1)
@@ -862,7 +865,7 @@ if barstate.islast
                     label levelLabel = label.new(time, level, fibDirection + str.tostring(ratio, "0.###") + "  " + str.tostring(level, format.mintick), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.gray, 90), textcolor = color.gray, size = size.tiny)
                     array.push(fibLines, levelLine)
                     array.push(fibLabels, levelLabel)
-    if showTradeFib and tradeDirectionAllowed
+    if showTradeFib and tradeDirectionAllowed and showStructureVisuals
         color tradeColor = tradeSide == 1 ? fibLongColor : fibShortColor
         string tradeDirection = tradeSide == 1 ? "顺势多 " : "顺势空 "
         for ratio in tradeFibRatios
@@ -896,8 +899,8 @@ plotshape(showSetupSignals and not regionEntryMode and longSetupSignal, "回撤�
 plotshape(showSetupSignals and not regionEntryMode and shortSetupSignal, "回撤空头候选", shape.labeldown, location.abovebar, fibShortColor, text = "回撤空", textcolor = color.white, size = size.tiny)
 plotshape(showSetupSignals and longRegionEntry, "区域入场多头候选", shape.labelup, location.belowbar, fibLongColor, text = "入场候选多", textcolor = color.white, size = size.tiny)
 plotshape(showSetupSignals and shortRegionEntry, "区域入场空头候选", shape.labeldown, location.abovebar, fibShortColor, text = "入场候选空", textcolor = color.white, size = size.tiny)
-plotshape(autoSwitchUp, "自动上涨", shape.labelup, location.belowbar, color.new(color.green, 0), text = "涨", textcolor = color.white, size = size.tiny)
-plotshape(autoSwitchDown, "自动下跌", shape.labeldown, location.abovebar, color.new(color.red, 0), text = "跌", textcolor = color.white, size = size.tiny)
-plotshape(autoConflict, "双向突破冲突", shape.xcross, location.abovebar, color.orange, text = "冲突", textcolor = color.orange, size = size.tiny)
-plot(trendMode == "自动/双向" ? autoDirection : na, "自动方向（1 涨 / -1 跌 / 0 未确认）", display = display.data_window)
+plotshape(showStructureVisuals and autoSwitchUp, "自动上涨", shape.labelup, location.belowbar, color.new(color.green, 0), text = "涨", textcolor = color.white, size = size.tiny)
+plotshape(showStructureVisuals and autoSwitchDown, "自动下跌", shape.labeldown, location.abovebar, color.new(color.red, 0), text = "跌", textcolor = color.white, size = size.tiny)
+plotshape(showStructureVisuals and autoConflict, "双向突破冲突", shape.xcross, location.abovebar, color.orange, text = "冲突", textcolor = color.orange, size = size.tiny)
+plot(showStructureVisuals and trendMode == "自动/双向" ? autoDirection : na, "自动方向（1 涨 / -1 跌 / 0 未确认）", display = display.data_window)
 plot(observationSide, "所选观察方向（1 多 / -1 空 / 0 中性）", display = display.data_window)

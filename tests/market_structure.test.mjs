@@ -380,6 +380,22 @@ assert.match(pine, /bool setupActive = .* and tradeDirectionAllowed/, "retraceme
 assert.match(pine, /if showTradeFib and tradeDirectionAllowed/, "trade reference lines honor the same direction gate");
 assert.match(pine, /if not setupActive\s+pendingSweepSide := 0\s+pendingSweepBar := na/, "direction disagreement clears a pending sweep rather than releasing a stale confirmation later");
 assert.match(pine, /EMA同向多/, "EMA zone wording does not claim confirmed medium structure");
+assert.match(pine, /bool showStructureVisuals = directionMethod != "高周期 EMA"/, "EMA direction automatically hides medium structure visuals");
+assert.match(pine, /plot\(not showStructureVisuals and emaDirectionReady \? directionEma : na, "方向 EMA（参考周期已收盘）".*style = plot\.style_stepline\)/, "EMA overlay uses the same confirmed value as the direction filter and holds it as steps");
+assert.match(pine, /midColor, 2, showMidLines and showStructureVisuals, midContainment/, "medium lines respect EMA presentation mode");
+for (const condition of [
+  "showMidPoints and array.size(midTimes) > 0",
+  "showMidFib and midCount >= 2",
+  "showTradeFib and tradeDirectionAllowed",
+  "showSetupInvalidation and setupActive",
+  "showSweepTarget and setupActive and hasSweepTarget",
+  "showSetupZone and setupActive and not longSetupSignal and not shortSetupSignal",
+]) assert.ok(pine.includes(`if ${condition} and showStructureVisuals`), `${condition} is hidden in EMA mode`);
+for (const event of ["autoSwitchUp", "autoSwitchDown", "autoConflict"])
+  assert.ok(pine.includes(`plotshape(showStructureVisuals and ${event},`), `${event} markers are hidden in EMA mode`);
+assert.doesNotMatch(pine.match(/bool setupActive = .*/)[0], /showStructureVisuals/, "visual suppression does not disable swing calculations");
+assert.doesNotMatch(pine.match(/bool obEntrySignal = .*/)[0], /showStructureVisuals/, "EMA presentation keeps OB entry confirmation active");
+assert.doesNotMatch(pine.match(/bool fvgEntrySignal = .*/)[0], /showStructureVisuals/, "EMA presentation keeps FVG entry confirmation active");
 assert.match(pine, /varip touchAlertKeys = array\.new_string\(\)/, "arrival deduplication survives realtime rollback");
 assert.match(pine, /close >= bottom and close <= top/, "instant arrival uses the current price, not the cumulative bar range");
 assert.match(pine, /bar_index > array\.get\(bornBars, i\)/, "a creation-bar gap is not treated as a return to the zone");
