@@ -284,7 +284,102 @@ assert.equal(visibleBreakZone({ side: -1, top: 100, bottom: 95 }, activeSetup), 
 assert.equal(visibleBreakZone({ side: 1, top: 100, bottom: 95 }, { ...activeSetup, active: false }), false, "zones hide when no setup is active");
 assert.equal(visibleBreakZone({ side: -1, top: 100, bottom: 95 }, activeSetup, false), true, "the filter can be disabled");
 
+// Bar-sequence reference model: exercise lifecycle ordering and confirmation rules.
+// This is a specification check, not execution of the Pine runtime.
+function regionEntries(bars, { side = 1, kind = "OB", requireSweep = false, limit = 3, obMode = "收盘价", fvgMode = "完全回补" } = {}) {
+  const states = new Map();
+  const signals = [];
+  let previousDirection = 0;
+  let zone = { kind, side, top: 110, bottom: 100, born: 0 };
+  for (let i = 0; i < bars.length; i++) {
+    const bar = bars[i];
+    const direction = bar.direction ?? side;
+    if (bar.replace) zone = { kind, side, top: 110, bottom: 100, born: i };
+    if (zone && candidateZoneExpired(zone, bar, i, { obMode, fvgMode, oppositeBreak: !!bar.oppositeBreak })) zone = null;
+    if (!zone) {
+      states.clear();
+      previousDirection = direction;
+      continue;
+    }
+    const key = zone.born;
+    for (const oldKey of states.keys()) if (oldKey !== key) states.delete(oldKey);
+    const state = states.get(key) ?? { touch: null, sweep: null, used: false };
+    states.set(key, state);
+    if (bar.visible === false || direction !== side || direction !== previousDirection || state.used || i <= zone.born) {
+      state.touch = state.sweep = null;
+    } else if (state.touch !== null && i - state.touch > limit) {
+      state.touch = state.sweep = null;
+    } else {
+      const range = bar.high - bar.low;
+      const trend = range > 0 && (side === 1
+        ? bar.close > bar.open && bar.close > bars[i - 1].close && (bar.close - bar.open) / range >= 0.5 && (bar.close - bar.low) / range >= 0.7 && bar.close > zone.top
+        : bar.close < bar.open && bar.close < bars[i - 1].close && (bar.open - bar.close) / range >= 0.5 && (bar.high - bar.close) / range >= 0.7 && bar.close < zone.bottom);
+      if (state.touch !== null && i > state.touch && (!requireSweep || state.sweep !== null && i > state.sweep) && trend) {
+        signals.push(i);
+        state.used = true;
+      } else if (bar.high >= zone.bottom && bar.low <= zone.top) {
+        state.touch ??= i;
+        const sweep = side === 1 ? bar.low <= 105 && bar.close >= 107 : bar.high >= 105 && bar.close <= 103;
+        if (sweep) state.sweep = i;
+      }
+    }
+    previousDirection = direction;
+  }
+  return signals;
+}
+const regionBars = [
+  { open: 115, high: 119, low: 114, close: 117 },
+  { open: 109, high: 110, low: 106, close: 108 },
+  { open: 109, high: 116, low: 109, close: 115 },
+  { open: 115, high: 122, low: 115, close: 121 },
+];
+assert.deepEqual(regionEntries(regionBars), [2], "same-side touch then later trend exit confirms once per region");
+const mirroredRegionBars = regionBars.map(({ open, high, low, close }) => ({ open: 210 - open, high: 210 - low, low: 210 - high, close: 210 - close }));
+assert.deepEqual(regionEntries(mirroredRegionBars, { side: -1 }), [2], "short region entries are symmetric");
+assert.deepEqual(regionEntries(regionBars, { requireSweep: true }), [], "requiring a sweep rejects an otherwise valid trend response");
+const sweptRegionBars = regionBars.map((bar, i) => i === 1 ? { ...bar, low: 104 } : bar);
+assert.deepEqual(regionEntries(sweptRegionBars, { requireSweep: true }), [2], "a known short-point sweep on touch can confirm on a later bar");
+const lateSweptRegionBars = regionBars.map((bar, i) => i === 2 ? { ...bar, low: 104, open: 104 } : bar);
+assert.deepEqual(regionEntries(lateSweptRegionBars, { requireSweep: true }), [3], "a trend candle that first sweeps must wait for a later trend confirmation");
+assert.deepEqual(regionEntries(regionBars.map((bar, i) => i === 2 ? { ...bar, low: 99, open: 99 } : bar), { obMode: "影线" }), [], "invalidation takes priority over a same-bar trend response");
+assert.deepEqual(regionEntries(regionBars, { kind: "FVG", fvgMode: "首次触及" }), [], "a first-touch-retired FVG cannot arm a later entry");
+assert.deepEqual(regionEntries(regionBars, { kind: "FVG" }), [2], "partially filled live FVG remains eligible");
+assert.deepEqual(regionEntries(regionBars.map((bar, i) => ({ ...bar, direction: i === 1 ? 0 : 1 }))), [], "direction changes cannot reuse a previous touch");
+assert.deepEqual(regionEntries(regionBars.map((bar, i) => ({ ...bar, direction: -1 }))), [], "countertrend regions cannot produce entries");
+assert.deepEqual(regionEntries(regionBars.map((bar, i) => i === 2 ? { ...bar, replace: true } : bar)), [], "same-side replacement cannot inherit old pending confirmation");
+assert.deepEqual(regionEntries(regionBars.map((bar, i) => i === 2 ? { ...bar, oppositeBreak: true } : bar)), [], "opposite structure events cancel before confirmation");
+assert.deepEqual(regionEntries(regionBars.map((bar, i) => i === 2 ? { ...bar, visible: false } : bar)), [], "hidden zones cannot confirm or retain a pending touch");
+const quietRegionBar = { open: 108, high: 110, low: 106, close: 108 };
+assert.deepEqual(regionEntries([...regionBars.slice(0, 2), quietRegionBar, quietRegionBar, regionBars[2]]), [4], "the final allowed confirmation bar remains eligible");
+assert.deepEqual(regionEntries([...regionBars.slice(0, 2), quietRegionBar, quietRegionBar, quietRegionBar, regionBars[2]]), [], "repeated touches do not extend the confirmation deadline");
+assert.deepEqual(regionEntries([...regionBars.slice(0, 2), quietRegionBar, quietRegionBar, quietRegionBar, quietRegionBar, quietRegionBar, regionBars[2]]), [7], "a new touch after the timeout bar can arm a fresh attempt");
+assert.deepEqual(regionEntries([regionBars[0], regionBars[2]]), [], "a trend touch cannot confirm on the same candle");
+assert.deepEqual(regionEntries([regionBars[0], regionBars[2], regionBars[3]]), [2], "the next trend candle may confirm an earlier trend touch");
+
 const pine = readFileSync(new URL("../market_structure.pine", import.meta.url), "utf8");
+assert.match(pine, /entryMethod = input\.string\("OB\/FVG 确认"/, "default signal mode uses region confirmation");
+assert.match(pine, /if barstate\.isconfirmed\s+array<string> liveKeys/, "region states advance only on confirmed candles");
+assert.ok(pine.indexOf("bool obEntrySignal = confirmZoneEntries") > pine.indexOf("addCandidateZone(fvgZones"), "confirmation evaluates after invalidation, replacement and zone creation");
+assert.match(pine, /observationSide != 0 and observationSide == observationSide\[1\]/, "direction must already be known before the touch candle");
+assert.match(pine, /not state\.used and bar_index > born/, "each region signals once and excludes its creation candle");
+assert.match(pine, /bar_index > state\.touchedBar and swept and trendResponse/, "touch and trend confirmation cannot share a candle");
+assert.match(pine, /not na\(state\.sweptBar\) and bar_index > state\.sweptBar/, "required sweep must precede confirmation");
+assert.match(pine, /bullishCandle and close > top : bearishCandle and close < bottom/, "confirmation must close outside the region in its direction");
+assert.match(pine, /if not array\.includes\(liveKeys, key\)\s+map\.remove\(states, key\)/, "removed regions cannot leave unbounded stale state");
+assert.match(pine, /alertcondition\(not regionEntryMode and longSetupSignal/, "legacy alerts are suppressed in region mode");
+assert.match(pine, /directionMethod = input\.string\("中期结构（分级）"/, "default preserves graded structure direction");
+assert.match(pine, /options = \["中期结构（分级）", "中期结构（严格）", "高周期 EMA"\]/, "all three direction sources can be selected");
+assert.match(pine, /directionEmaTimeframe = input\.timeframe\("5",/, "EMA reference timeframe is configurable and defaults to five minutes");
+assert.match(pine, /request\.security\(syminfo\.tickerid, directionEmaTimeframe, \[ta\.ema\(close, directionEmaLength\)\[1\], ta\.ema\(close, directionEmaLength\)\[2\]\], lookahead = barmerge\.lookahead_on\)/, "selected EMA timeframe requests two completed values without future leakage");
+assert.match(pine, /chart\.is_standard and not timeframe\.isticks and timeframe\.in_seconds\(\) < timeframe\.in_seconds\(directionEmaTimeframe\)/, "EMA rejects ticks, synthetic charts, and references not strictly above the chart timeframe");
+assert.match(pine, /emaDirectionSupported and not na\(directionEma\) and not na\(directionEmaPrevious\)/, "EMA requires both completed values and a supported chart");
+assert.match(pine, /int emaObservationSide = not emaDirectionReady \? 0 : directionEma > directionEmaPrevious \? 1 : directionEma < directionEmaPrevious \? -1 : 0/, "slope alone determines EMA direction; equal or unavailable is neutral");
+assert.match(pine, /int observationSide = directionMethod == "高周期 EMA" \? emaObservationSide : directionMethod == "中期结构（严格）" \? confirmedObservationSide : confirmedObservationSide != 0 \? confirmedObservationSide : biasSide/, "strict mode cannot fall back to a provisional direction");
+assert.match(pine, /bool tradeDirectionAllowed = confirmedObservationSide != 0 and observationSide == tradeSide/, "EMA never bypasses strict swing qualification");
+assert.match(pine, /bool setupActive = .* and tradeDirectionAllowed/, "retracement signals honor the selected direction");
+assert.match(pine, /if showTradeFib and tradeDirectionAllowed/, "trade reference lines honor the same direction gate");
+assert.match(pine, /if not setupActive\s+pendingSweepSide := 0\s+pendingSweepBar := na/, "direction disagreement clears a pending sweep rather than releasing a stale confirmation later");
+assert.match(pine, /EMA同向多/, "EMA zone wording does not claim confirmed medium structure");
 assert.match(pine, /varip touchAlertKeys = array\.new_string\(\)/, "arrival deduplication survives realtime rollback");
 assert.match(pine, /close >= bottom and close <= top/, "instant arrival uses the current price, not the cumulative bar range");
 assert.match(pine, /bar_index > array\.get\(bornBars, i\)/, "a creation-bar gap is not treated as a return to the zone");

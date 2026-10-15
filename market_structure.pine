@@ -11,7 +11,10 @@ groupBreakZones = "高级 · OB / FVG"
 groupHistory = "高级 · 历史与数量"
 groupFib = "高级 · 参考线与颜色"
 advancedSettings = input.bool(false, "启用高级参数调整", tooltip = "日常只需调整常用显示、方向和提醒。高级参数保留当前值，开启后才可编辑；并非隐藏参数。区域标注区分暂定方向和严格确认方向，灰色历史框不代表当前机会。", group = groupCommon, display = display.none)
-showDirectionStatus = input.bool(true, "显示方向状态", tooltip = "中期突破先给暂偏多/空；有效摆动同时满足两个中高和两个中低同向变化后升级为已确认。暂定方向只用于观察 OB/FVG，不提前触发回撤信号。", group = groupCommon, display = display.none)
+showDirectionStatus = input.bool(true, "显示方向状态", tooltip = "右上角显示所选方向来源和结果。结构分级模式先给暂偏方向，严格确认后升级；EMA 模式只表示所选参考周期已收盘均线的斜率。暂定方向不提前触发回撤信号。", group = groupCommon, display = display.none)
+directionMethod = input.string("中期结构（分级）", "方向判断方式", options = ["中期结构（分级）", "中期结构（严格）", "高周期 EMA"], tooltip = "分级：保留暂偏方向与严格确认，区域入场可用暂偏方向。严格：只用严格确认方向，中性不放行。EMA：比较最近两根已收盘参考周期 EMA 的斜率，相等为中性；参考周期必须大于当前标准时间图周期。统一用于方向状态、区域标注、入场候选与通知。斐波那契回撤区和原回撤扫荡信号仍需严格中期摆动，且与所选方向一致；不改变 OB/FVG 生成或失效规则。趋势模式仍控制中期结构算法，比较方向时建议使用自动/双向。", group = groupCommon, display = display.none)
+directionEmaTimeframe = input.timeframe("5", "EMA 参考周期", tooltip = "仅用于高周期 EMA 方向，须大于当前图表周期。例如 1 分钟图可选 5 分钟，3 分钟图可选 15 分钟。切换图表周期后请检查此项；不会自动调整。不支持时显示中性。", group = groupCommon, display = display.none)
+directionEmaLength = input.int(50, "方向 EMA 长度", minval = 1, maxval = 500, tooltip = "所选参考周期上的 EMA 长度，默认 50。EMA 上升偏多、下降偏空，不附加价格位于均线上下的条件；只使用已收盘参考周期值。高周期 EMA 不等同于按时间倍数换算的低周期 EMA。", group = groupMid, display = display.none, active = advancedSettings)
 
 trendMode = input.string("自动/双向", "趋势模式", options = ["上涨", "下跌", "自动/双向"], tooltip = "上涨或下跌只运行对应的中期确认规则；自动/双向同时维护两套候选，并按所选突破依据触发方向切换。方向切换不代表突破已站稳。", group = groupCommon, display = display.none)
 showMidPoints = input.bool(true, "显示中期点", tooltip = "中期高低点在价格突破基准后才确认，标签回绘到原始极值位置。", group = groupCommon, display = display.none)
@@ -19,14 +22,17 @@ showMidLines = input.bool(true, "显示中期结构线", tooltip = "连接最终
 showSetupZone = input.bool(true, "显示候选回撤区", tooltip = "仅以已确认的中期顺势摆动定回撤区。按下方设置可在触区后顺势离开时结束机会。与上方顺势交易回撤线通常二选一显示；关闭此框不停止信号计算。", group = groupCommon, display = display.none)
 showSetupInvalidation = input.bool(true, "显示摆动失效位", tooltip = "细线标出当前顺势摆动的起点；价格触及后，该摆动的回撤机会失效。", group = groupCommon, display = display.none)
 showSweepTarget = input.bool(true, "显示待扫短期点", tooltip = "短虚线标出当前已确认、可用于扫荡判断的最近短期低点或高点；随新短期点更新。", group = groupCommon, display = display.none)
-showSetupSignals = input.bool(true, "显示候选信号", tooltip = "先在回撤区扫短期点并收回，再由后续趋势 K 线确认。标记是观察信号，不是成交记录。", group = groupCommon, display = display.none)
-showObCandidates = input.bool(false, "显示 OB 候选区", tooltip = "OB 候选：中期恢复突破前最近的反向 K 线高低价区间。只是图形线索，不证明存在机构订单。", group = groupCommon, display = display.none)
+entryMethod = input.string("OB/FVG 确认", "入场候选方式", options = ["OB/FVG 确认", "斐波那契扫荡"], tooltip = "区域确认：所选方向稳定后回访同向且可见的有效 OB/FVG，等待后续趋势 K 收盘离开区域，可选要求扫荡。分级方向可使用暂偏方向；严格模式需严格确认。斐波那契：保留严格中期摆动回撤区扫荡后确认的原流程。两种模式只输出所选一套信号，均不是自动下单。", group = groupCommon, display = display.none)
+entryRequireSweep = input.bool(false, "区域入场需先扫荡", tooltip = "仅用于 OB/FVG 确认：触区当根或随后仍触区时，须刺破此前已确认短期点并收回，再由更晚的趋势 K 确认。关闭时只要求触区后趋势 K 确认。不要求短期点位于斐波那契摆动终点之后。", group = groupCommon, display = display.none)
+showSetupSignals = input.bool(true, "显示候选信号", tooltip = "只显示所选入场候选方式的收盘确认标记，标在确认当根，不回绘到触区 K 线。标记不是成交记录；关闭显示不关闭信号提醒。", group = groupCommon, display = display.none)
+showObCandidates = input.bool(true, "显示 OB 候选区", tooltip = "OB 候选：中期恢复突破前最近的反向 K 线高低价区间。只是图形线索，不证明存在机构订单。区域入场只使用已启用且符合显示过滤的区域。", group = groupCommon, display = display.none)
 showFvgCandidates = input.bool(false, "显示 FVG 候选区", tooltip = "FVG 候选：只在中期恢复突破附近查找第一根与第三根 K 线高低范围不重叠的缺口；不对每个短期点单独画区，也不等于所有失衡。", group = groupCommon, display = display.none)
 onlyOverlappingBreakZones = input.bool(false, "只显示与当前回撤区重合的同向区域", tooltip = "默认关闭：启用 OB/FVG 后可查看全部仍有效的候选区。开启时只显示与当前有效中期回撤区价格重叠、方向一致的区域；其他区域仍按原规则跟踪失效，但暂时隐藏。", group = groupCommon, display = display.none)
 
 alertSetupTouch = input.bool(true, "提醒：进入回撤区", tooltip = "当前有效中期回撤区首次到价时提醒，不要求完成扫荡确认。", group = groupAlerts, display = display.none)
 alertObTouch = input.bool(true, "提醒：进入 OB", tooltip = "只提醒已启用、符合当前显示过滤的活跃 OB；灰色历史框不提醒。", group = groupAlerts, display = display.none)
 alertFvgTouch = input.bool(true, "提醒：进入 FVG", tooltip = "只提醒已启用、符合当前显示过滤的活跃 FVG；首次触及失效模式下，会先提醒再收起区域。", group = groupAlerts, display = display.none)
+alertEntryConfirmation = input.bool(true, "提醒：区域入场确认", tooltip = "OB/FVG 确认模式下，趋势 K 收盘确认时调用 alert()。与到价提醒不同；仍需在 TradingView 创建任何 alert() 函数调用提醒。", group = groupAlerts, display = display.none)
 touchAlertTiming = input.string("即时到价", "提醒时机", options = ["即时到价", "收盘检查"], tooltip = "即时到价：实时最新价格进入区域即提醒。收盘检查：收盘时检查整根 K 线是否触及。同一区域只提醒一次；跳空直接越过区域不视为即时到价。更新脚本或设置后需重新创建 TradingView 提醒，条件选择任何 alert() 函数调用。", group = groupAlerts, display = display.none)
 
 leftBars = input.int(1, "左侧确认 K 线数", minval = 1, maxval = 20, tooltip = "孤立高点必须高于左侧这些 K 线；孤立低点必须低于它们。", group = groupShort, display = display.none, active = advancedSettings)
@@ -47,6 +53,7 @@ minSweepTicks = input.int(1, "最小刺破跳动数", minval = 1, maxval = 100, 
 minReclaimTicks = input.int(1, "最小收回跳动数", minval = 1, maxval = 100, tooltip = "刺破后，本根 K 线收盘须回到短期点内侧至少这么多个最小价格跳动。", group = groupSetup, display = display.none, active = advancedSettings)
 confirmationBars = input.int(3, "扫荡后确认期限（根）", minval = 1, maxval = 20, tooltip = "扫荡之后最多等待多少根 K 线出现同方向趋势 K 线；不允许扫荡与确认同根完成。", group = groupSetup, display = display.none, active = advancedSettings)
 maxSetupBars = input.int(60, "摆动确认后最长等待（根）", minval = 1, maxval = 500, tooltip = "从顺势摆动实际确认的 K 线起计；超期不再接受扫荡或确认信号。", group = groupSetup, display = display.none, active = advancedSettings)
+entryConfirmationBars = input.int(3, "OB/FVG 触区后确认期限（根）", minval = 1, maxval = 20, tooltip = "从同向区域首次有效触区起，最多等待这些根后续 K 线；扫荡不会延长期限。超时取消此次等待，之后重新触区可再等待。每区最多确认一次；方向变化、隐藏或区域失效时取消等待。", group = groupSetup, display = display.none, active = advancedSettings)
 
 minBodyFraction = input.float(0.5, "趋势 K 线最小实体占比", minval = 0.0, maxval = 1.0, step = 0.05, tooltip = "实体长度除以整根 K 线的高低价范围；这是单根推进的量化代理，不是整段趋势动能评分。", group = groupMomentum, display = display.none, active = advancedSettings)
 minClosePosition = input.float(0.7, "趋势 K 线收盘位置", minval = 0.5, maxval = 1.0, step = 0.05, tooltip = "多头收盘须位于本根高低区间靠高点的一侧，空头镜像；还要求收盘比前一根向交易方向推进。", group = groupMomentum, display = display.none, active = advancedSettings)
@@ -179,7 +186,8 @@ retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, arr
     array.size(zones)
 
 zoneDirectionText(string kind, int side, int referenceSide, bool directionConfirmed) =>
-    referenceSide == 0 ? (side == 1 ? "多头 " : "空头 ") + kind + " · 方向未确认" : side == referenceSide ? (directionConfirmed ? (side == 1 ? "顺势多 " : "顺势空 ") : (side == 1 ? "暂偏多 " : "暂偏空 ")) + kind : "逆势 " + kind + (side == 1 ? " · 支撑" : " · 阻力")
+    string alignedText = directionMethod == "高周期 EMA" ? (side == 1 ? "EMA同向多 " : "EMA同向空 ") : directionConfirmed ? (side == 1 ? "顺势多 " : "顺势空 ") : (side == 1 ? "暂偏多 " : "暂偏空 ")
+    referenceSide == 0 ? (side == 1 ? "多头 " : "空头 ") + kind + " · 方向未确认" : side == referenceSide ? alignedText + kind : "逆势 " + kind + (side == 1 ? " · 支撑" : " · 阻力")
 
 styleCandidateZone(box candidate, color zoneColor, bool visible, string kind, int side, int referenceSide, bool directionConfirmed) =>
     bool aligned = referenceSide != 0 and side == referenceSide
@@ -264,6 +272,58 @@ updateCandidateZones(array<box> zones, array<int> sides, array<int> bornBars, ar
                 array.set(seen, position, true)
         position -= 1
     array.size(zones)
+
+// Separate per-zone state prevents a touch in one region confirming another.
+type ZoneEntryState
+    int touchedBar = na
+    int sweptBar = na
+    bool used = false
+
+confirmZoneEntries(array<box> zones, array<int> sides, array<int> bornBars, map<string, ZoneEntryState> states, bool enabled, int referenceSide, bool directionStable, bool activeSetup, int setupSide, float setupTopPrice, float setupBottomPrice, bool bullishCandle, bool bearishCandle, float shortLow, float shortHigh) =>
+    bool triggered = false
+    if barstate.isconfirmed
+        array<string> liveKeys = array.new_string()
+        if array.size(zones) > 0
+            for i = 0 to array.size(zones) - 1
+                box zone = array.get(zones, i)
+                int side = array.get(sides, i)
+                int born = array.get(bornBars, i)
+                string key = str.tostring(born) + ":" + str.tostring(box.get_left(zone)) + ":" + str.tostring(side)
+                array.push(liveKeys, key)
+                if not map.contains(states, key)
+                    map.put(states, key, ZoneEntryState.new())
+                ZoneEntryState state = map.get(states, key)
+                float top = box.get_top(zone)
+                float bottom = box.get_bottom(zone)
+                bool visible = not onlyOverlappingBreakZones or (activeSetup and side == setupSide and top >= setupBottomPrice and bottom <= setupTopPrice)
+                bool eligible = enabled and visible and directionStable and referenceSide == side and not state.used and bar_index > born
+                if not eligible
+                    state.touchedBar := na
+                    state.sweptBar := na
+                else if not na(state.touchedBar) and bar_index - state.touchedBar > entryConfirmationBars
+                    // Do not re-arm on the same timeout bar or keep extending a touch.
+                    state.touchedBar := na
+                    state.sweptBar := na
+                else
+                    bool swept = not entryRequireSweep or (not na(state.sweptBar) and bar_index > state.sweptBar)
+                    bool trendResponse = side == 1 ? bullishCandle and close > top : bearishCandle and close < bottom
+                    if not na(state.touchedBar) and bar_index > state.touchedBar and swept and trendResponse
+                        state.used := true
+                        state.touchedBar := na
+                        state.sweptBar := na
+                        triggered := true
+                    else if high >= bottom and low <= top
+                        if na(state.touchedBar)
+                            state.touchedBar := bar_index
+                        bool sweptLow = not na(shortLow) and shortLow - low >= minSweepTicks * syminfo.mintick and close - shortLow >= minReclaimTicks * syminfo.mintick
+                        bool sweptHigh = not na(shortHigh) and high - shortHigh >= minSweepTicks * syminfo.mintick and shortHigh - close >= minReclaimTicks * syminfo.mintick
+                        if side == 1 ? sweptLow : sweptHigh
+                            state.sweptBar := bar_index
+        // Expired, replaced and removed zones must not retain pending state.
+        for key in map.keys(states)
+            if not array.includes(liveKeys, key)
+                map.remove(states, key)
+    triggered
 
 retireSameSideZones(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int side, bool keepHistory, int historyLimit, int endTime, string kind) =>
     int position = array.size(zones) - 1
@@ -560,8 +620,15 @@ if barstate.isconfirmed and biasSide != 0 and not na(biasInvalidation)
         biasInvalidated := true
 // A newer opposite break overrides the older strict trend until it reconfirms.
 int confirmedObservationSide = tradeSide != 0 and not biasInvalidated and (biasSide == 0 or biasSide == tradeSide) ? tradeSide : 0
-int observationSide = confirmedObservationSide != 0 ? confirmedObservationSide : biasSide
-bool observationConfirmed = confirmedObservationSide != 0
+// Historical offsets with lookahead_on expose only completed higher-timeframe bars.
+// Keep this request unconditional; reject equal/larger or synthetic chart periods below.
+[directionEma, directionEmaPrevious] = request.security(syminfo.tickerid, directionEmaTimeframe, [ta.ema(close, directionEmaLength)[1], ta.ema(close, directionEmaLength)[2]], lookahead = barmerge.lookahead_on)
+bool emaDirectionSupported = chart.is_standard and not timeframe.isticks and timeframe.in_seconds() < timeframe.in_seconds(directionEmaTimeframe)
+bool emaDirectionReady = emaDirectionSupported and not na(directionEma) and not na(directionEmaPrevious)
+int emaObservationSide = not emaDirectionReady ? 0 : directionEma > directionEmaPrevious ? 1 : directionEma < directionEmaPrevious ? -1 : 0
+int observationSide = directionMethod == "高周期 EMA" ? emaObservationSide : directionMethod == "中期结构（严格）" ? confirmedObservationSide : confirmedObservationSide != 0 ? confirmedObservationSide : biasSide
+bool observationConfirmed = directionMethod == "高周期 EMA" ? emaDirectionReady and emaObservationSide != 0 : confirmedObservationSide != 0
+bool tradeDirectionAllowed = confirmedObservationSide != 0 and observationSide == tradeSide
 
 float fibNear = math.min(setupFibNear, setupFibFar)
 float fibFar = math.max(setupFibNear, setupFibFar)
@@ -569,7 +636,7 @@ float setupNearPrice = tradeSwingEnd + (tradeSwingStart - tradeSwingEnd) * fibNe
 float setupFarPrice = tradeSwingEnd + (tradeSwingStart - tradeSwingEnd) * fibFar
 float setupTop = math.max(setupNearPrice, setupFarPrice)
 float setupBottom = math.min(setupNearPrice, setupFarPrice)
-bool setupActive = tradeSide != 0 and not na(tradeConfirmedBar) and bar_index - tradeConfirmedBar <= maxSetupBars and (na(signaledSwingBar) or signaledSwingBar != tradeConfirmedBar) and (na(consumedSwingBar) or consumedSwingBar != tradeConfirmedBar) and confirmedObservationSide == tradeSide
+bool setupActive = tradeSide != 0 and not na(tradeConfirmedBar) and bar_index - tradeConfirmedBar <= maxSetupBars and (na(signaledSwingBar) or signaledSwingBar != tradeConfirmedBar) and (na(consumedSwingBar) or consumedSwingBar != tradeConfirmedBar) and tradeDirectionAllowed
 if na(setupSwingBar) or setupSwingBar != tradeConfirmedBar
     setupSwingBar := tradeConfirmedBar
     pendingSweepSide := 0
@@ -729,6 +796,20 @@ if midBreakUp or midBreakDown
             bool showFvg = not onlyOverlappingBreakZones or (setupActive and breakSide == tradeSide and fvgTop >= setupBottom and fvgBottom <= setupTop)
             addCandidateZone(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgZoneSeen, fvgZoneHistory, time[fvgOffset + 2], fvgTop, time, fvgBottom, breakSide == 1 ? color.lime : color.orange, "FVG", breakSide, maxCandidateZones, keepExpiredZones, maxExpiredZones, showFvg, observationSide, observationConfirmed)
 
+// Run AFTER invalidation, same-side replacement and creation. Creation bars cannot
+// arm entries, and regions removed on this bar cannot produce a confirmation.
+var obEntryStates = map.new<string, ZoneEntryState>()
+var fvgEntryStates = map.new<string, ZoneEntryState>()
+bool regionEntryMode = entryMethod == "OB/FVG 确认"
+bool entryDirectionStable = observationSide != 0 and observationSide == observationSide[1]
+bool obEntrySignal = confirmZoneEntries(obZones, obZoneSides, obZoneBornBars, obEntryStates, regionEntryMode and showObCandidates, observationSide, entryDirectionStable, setupActive, tradeSide, setupTop, setupBottom, bullishTrendCandle, bearishTrendCandle, sweepRefLow, sweepRefHigh)
+bool fvgEntrySignal = confirmZoneEntries(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgEntryStates, regionEntryMode and showFvgCandidates, observationSide, entryDirectionStable, setupActive, tradeSide, setupTop, setupBottom, bullishTrendCandle, bearishTrendCandle, sweepRefLow, sweepRefHigh)
+bool longRegionEntry = (obEntrySignal or fvgEntrySignal) and observationSide == 1
+bool shortRegionEntry = (obEntrySignal or fvgEntrySignal) and observationSide == -1
+if alertEntryConfirmation and barstate.isrealtime and (longRegionEntry or shortRegionEntry)
+    string sourceText = obEntrySignal and fvgEntrySignal ? "OB+FVG" : obEntrySignal ? "OB" : "FVG"
+    alert(syminfo.ticker + " · " + timeframe.period + " · " + sourceText + (longRegionEntry ? " 入场候选多" : " 入场候选空") + " · 趋势 K 收盘确认 · 收盘价 " + str.tostring(close, format.mintick) + "；非成交记录。", alert.freq_all)
+
 // Labels are created only for pivots surviving same-type and containment
 // processing, so the chart and the medium structure line describe the same points.
 if barstate.islast
@@ -773,7 +854,7 @@ if barstate.islast
         if swingStart != swingEnd
             bool longSwing = swingEnd > swingStart
             string fibDirection = longSwing ? "上行摆动 " : "下行摆动 "
-            bool sameTradeSwing = confirmedObservationSide != 0 and swingStart == tradeSwingStart and swingEnd == tradeSwingEnd
+            bool sameTradeSwing = tradeDirectionAllowed and swingStart == tradeSwingStart and swingEnd == tradeSwingEnd
             for ratio in fibRatios
                 if not (showTradeFib and sameTradeSwing and (ratio == 0.618 or ratio == 0.786))
                     float level = swingEnd + (swingStart - swingEnd) * ratio
@@ -781,7 +862,7 @@ if barstate.islast
                     label levelLabel = label.new(time, level, fibDirection + str.tostring(ratio, "0.###") + "  " + str.tostring(level, format.mintick), xloc = xloc.bar_time, style = label.style_label_left, color = color.new(color.gray, 90), textcolor = color.gray, size = size.tiny)
                     array.push(fibLines, levelLine)
                     array.push(fibLabels, levelLabel)
-    if showTradeFib and confirmedObservationSide != 0
+    if showTradeFib and tradeDirectionAllowed
         color tradeColor = tradeSide == 1 ? fibLongColor : fibShortColor
         string tradeDirection = tradeSide == 1 ? "顺势多 " : "顺势空 "
         for ratio in tradeFibRatios
@@ -795,6 +876,7 @@ var table directionStatus = table.new(position.top_right, 1, 1)
 if barstate.islast
     if showDirectionStatus
         string directionText = observationSide == 0 ? "方向未确认" : observationConfirmed ? (observationSide == 1 ? "多头已确认" : "空头已确认") : (observationSide == 1 ? "暂偏多 · 等待确认" : "暂偏空 · 等待确认")
+        directionText := directionMethod == "高周期 EMA" ? "EMA" + str.tostring(directionEmaLength) + " · 参考周期 " + directionEmaTimeframe + " · " + (not emaDirectionSupported ? "需标准时间图且参考周期大于图表周期" : not emaDirectionReady ? "等待数据" : observationSide == 1 ? "偏多" : observationSide == -1 ? "偏空" : "中性") : directionMethod + " · " + directionText
         color directionColor = observationSide == 1 ? fibLongColor : observationSide == -1 ? fibShortColor : color.gray
         table.cell(directionStatus, 0, 0, directionText, text_color = directionColor, bgcolor = color.new(directionColor, 92), text_size = size.small)
     else
@@ -806,11 +888,16 @@ alertcondition(newMidHigh, "中期高点确认", "中期高点已确认")
 alertcondition(newMidLow, "中期低点确认", "中期低点已确认")
 alertcondition(autoSwitchUp, "自动切换上涨", "中期结构自动切换为上涨")
 alertcondition(autoSwitchDown, "自动切换下跌", "中期结构自动切换为下跌")
-alertcondition(longSetupSignal, "回撤扫荡多头候选", "回撤区扫荡后出现多头趋势 K 线")
-alertcondition(shortSetupSignal, "回撤扫荡空头候选", "回撤区扫荡后出现空头趋势 K 线")
-plotshape(showSetupSignals and longSetupSignal, "多头候选", shape.labelup, location.belowbar, fibLongColor, text = "候选多", textcolor = color.white, size = size.tiny)
-plotshape(showSetupSignals and shortSetupSignal, "空头候选", shape.labeldown, location.abovebar, fibShortColor, text = "候选空", textcolor = color.white, size = size.tiny)
+alertcondition(not regionEntryMode and longSetupSignal, "回撤扫荡多头候选", "回撤区扫荡后出现多头趋势 K 线")
+alertcondition(not regionEntryMode and shortSetupSignal, "回撤扫荡空头候选", "回撤区扫荡后出现空头趋势 K 线")
+alertcondition(longRegionEntry, "区域入场候选多", "同向有效 OB/FVG 回访后，后续多头趋势 K 收盘离开区域")
+alertcondition(shortRegionEntry, "区域入场候选空", "同向有效 OB/FVG 回访后，后续空头趋势 K 收盘离开区域")
+plotshape(showSetupSignals and not regionEntryMode and longSetupSignal, "回撤多头候选", shape.labelup, location.belowbar, fibLongColor, text = "回撤多", textcolor = color.white, size = size.tiny)
+plotshape(showSetupSignals and not regionEntryMode and shortSetupSignal, "回撤空头候选", shape.labeldown, location.abovebar, fibShortColor, text = "回撤空", textcolor = color.white, size = size.tiny)
+plotshape(showSetupSignals and longRegionEntry, "区域入场多头候选", shape.labelup, location.belowbar, fibLongColor, text = "入场候选多", textcolor = color.white, size = size.tiny)
+plotshape(showSetupSignals and shortRegionEntry, "区域入场空头候选", shape.labeldown, location.abovebar, fibShortColor, text = "入场候选空", textcolor = color.white, size = size.tiny)
 plotshape(autoSwitchUp, "自动上涨", shape.labelup, location.belowbar, color.new(color.green, 0), text = "涨", textcolor = color.white, size = size.tiny)
 plotshape(autoSwitchDown, "自动下跌", shape.labeldown, location.abovebar, color.new(color.red, 0), text = "跌", textcolor = color.white, size = size.tiny)
 plotshape(autoConflict, "双向突破冲突", shape.xcross, location.abovebar, color.orange, text = "冲突", textcolor = color.orange, size = size.tiny)
 plot(trendMode == "自动/双向" ? autoDirection : na, "自动方向（1 涨 / -1 跌 / 0 未确认）", display = display.data_window)
+plot(observationSide, "所选观察方向（1 多 / -1 空 / 0 中性）", display = display.data_window)
