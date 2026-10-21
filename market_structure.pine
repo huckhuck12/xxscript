@@ -3,6 +3,13 @@ indicator("短期 / 中期市场结构", overlay = true, max_lines_count = 500, 
 
 groupCommon = "01 常用显示与方向"
 groupAlerts = "02 到价提醒（需创建 TradingView 警报）"
+groupEvaluation = "03 信号表现（非交易回测）"
+showSignalEvaluation = input.bool(true, "显示信号表现面板", tooltip = "以候选信号收盘价为观察基准，统计之后 5/10/20 根已收盘 K 线的方向收益、最大顺向/逆向幅度，除以信号当时 ATR。排除信号当根高低价。正向比例不是交易胜率，不含成交、费用或止盈止损。", group = groupEvaluation, display = display.none)
+evaluationSide = input.string("全部", "统计与样本方向", options = ["全部", "仅多头", "仅空头"], group = groupEvaluation, display = display.none)
+evaluationLimit = input.int(200, "保留最近候选数", minval = 20, maxval = 500, tooltip = "保留所选入场方式最近这些候选，多空共用上限；方向筛选在保留后应用。每个窗口只统计完整样本，允许窗口重叠，不代表独立交易。", group = groupEvaluation, display = display.none)
+showEvaluationSample = input.bool(false, "标记单个观察样本", group = groupEvaluation, display = display.none)
+evaluationSampleRank = input.int(1, "样本：从最近第几个", minval = 1, maxval = 500, tooltip = "在保留的候选中按方向筛选后，从最近往前选择，包括尚未完成窗口的样本。", group = groupEvaluation, display = display.none)
+evaluationSampleWindow = input.int(10, "样本观察窗口（根）", options = [5, 10, 20], group = groupEvaluation, display = display.none)
 groupShort = "高级 · 短期结构"
 groupMid = "高级 · 中期结构"
 groupSetup = "高级 · 回撤与扫荡"
@@ -907,3 +914,124 @@ plotshape(showStructureVisuals and autoSwitchDown, "自动下跌", shape.labeldo
 plotshape(showStructureVisuals and autoConflict, "双向突破冲突", shape.xcross, location.abovebar, color.orange, text = "冲突", textcolor = color.orange, size = size.tiny)
 plot(showStructureVisuals and trendMode == "自动/双向" ? autoDirection : na, "自动方向（1 涨 / -1 跌 / 0 未确认）", display = display.data_window)
 plot(observationSide, "所选观察方向（1 多 / -1 空 / 0 中性）", display = display.data_window)
+
+// Forward observation only: snapshot signal close/ATR, then consume later closed bars.
+// Each sample owns its arrays; overlapping observations remain independent.
+type SignalObservation
+    int bornBar
+    int bornTime
+    int side
+    float baseline
+    float atrSnapshot
+    float highestAfter
+    float lowestAfter
+    array<float> returns
+    array<float> favorable
+    array<float> adverse
+    array<int> endTimes
+    array<float> endPrices
+
+evaluationMatches(int side) =>
+    evaluationSide == "全部" or (evaluationSide == "仅多头" ? side == 1 : side == -1)
+
+evaluationNumber(float value) =>
+    na(value) ? "—" : str.tostring(value, "0.00")
+
+var observations = array.new<SignalObservation>()
+var observationWindows = array.from(5, 10, 20)
+var int skippedObservationAtr = 0
+if barstate.isconfirmed
+    if array.size(observations) > 0
+        for sample in observations
+            int age = bar_index - sample.bornBar
+            if age > 0 and age <= 20
+                sample.highestAfter := na(sample.highestAfter) ? high : math.max(sample.highestAfter, high)
+                sample.lowestAfter := na(sample.lowestAfter) ? low : math.min(sample.lowestAfter, low)
+                for w = 0 to 2
+                    if age == array.get(observationWindows, w)
+                        float forwardReturn = sample.side * (close - sample.baseline) / sample.atrSnapshot
+                        float mfe = math.max(0.0, sample.side == 1 ? sample.highestAfter - sample.baseline : sample.baseline - sample.lowestAfter) / sample.atrSnapshot
+                        float mae = math.max(0.0, sample.side == 1 ? sample.baseline - sample.lowestAfter : sample.highestAfter - sample.baseline) / sample.atrSnapshot
+                        array.set(sample.returns, w, forwardReturn)
+                        array.set(sample.favorable, w, mfe)
+                        array.set(sample.adverse, w, mae)
+                        array.set(sample.endTimes, w, time)
+                        array.set(sample.endPrices, w, close)
+    int signalSide = regionEntryMode ? (longRegionEntry ? 1 : shortRegionEntry ? -1 : 0) : (longSetupSignal ? 1 : shortSetupSignal ? -1 : 0)
+    if signalSide != 0
+        if not na(closeAtr) and closeAtr > 0
+            array.push(observations, SignalObservation.new(bar_index, time, signalSide, close, closeAtr, na, na, array.new_float(3, na), array.new_float(3, na), array.new_float(3, na), array.new_int(3, na), array.new_float(3, na)))
+            if array.size(observations) > evaluationLimit
+                array.shift(observations)
+        else
+            skippedObservationAtr += 1
+
+var table evaluationPanel = table.new(position.bottom_right, 6, 7, border_width = 1)
+var line evaluationPath = na
+var label evaluationStart = na
+var label evaluationEnd = na
+if barstate.islast
+    table.clear(evaluationPanel, 0, 0, 5, 6)
+    if not na(evaluationPath)
+        line.delete(evaluationPath)
+        evaluationPath := na
+    if not na(evaluationStart)
+        label.delete(evaluationStart)
+        evaluationStart := na
+    if not na(evaluationEnd)
+        label.delete(evaluationEnd)
+        evaluationEnd := na
+    int matchingCount = 0
+    SignalObservation selectedSample = na
+    int sampleIndex = array.size(observations) - 1
+    while sampleIndex >= 0
+        SignalObservation sample = array.get(observations, sampleIndex)
+        if evaluationMatches(sample.side)
+            matchingCount += 1
+            if matchingCount == evaluationSampleRank
+                selectedSample := sample
+        sampleIndex -= 1
+    if showSignalEvaluation
+        table.cell(evaluationPanel, 0, 0, "信号表现 · " + evaluationSide, text_color = color.white, bgcolor = color.new(color.blue, 45))
+        table.cell(evaluationPanel, 1, 0, entryMethod, text_color = chart.fg_color)
+        table.cell(evaluationPanel, 2, 0, "保留 " + str.tostring(array.size(observations)), text_color = chart.fg_color)
+        table.cell(evaluationPanel, 3, 0, "筛选 " + str.tostring(matchingCount), text_color = chart.fg_color)
+        array<string> headings = array.from("窗口", "完整样本", "正向比例", "均值收益/ATR", "均值顺向/ATR", "均值逆向/ATR")
+        for c = 0 to 5
+            table.cell(evaluationPanel, c, 1, array.get(headings, c), text_color = chart.fg_color)
+        for w = 0 to 2
+            int completed = 0
+            int positive = 0
+            float sumReturn = 0.0
+            float sumMfe = 0.0
+            float sumMae = 0.0
+            for sample in observations
+                float result = array.get(sample.returns, w)
+                if evaluationMatches(sample.side) and not na(result)
+                    completed += 1
+                    positive += result > 0 ? 1 : 0
+                    sumReturn += result
+                    sumMfe += array.get(sample.favorable, w)
+                    sumMae += array.get(sample.adverse, w)
+            int row = w + 2
+            table.cell(evaluationPanel, 0, row, str.tostring(array.get(observationWindows, w)) + " 根", text_color = chart.fg_color)
+            table.cell(evaluationPanel, 1, row, str.tostring(completed), text_color = chart.fg_color)
+            table.cell(evaluationPanel, 2, row, completed > 0 ? str.tostring(100.0 * positive / completed, "0.0") + "%" : "—", text_color = chart.fg_color)
+            table.cell(evaluationPanel, 3, row, evaluationNumber(completed > 0 ? sumReturn / completed : na), text_color = chart.fg_color)
+            table.cell(evaluationPanel, 4, row, evaluationNumber(completed > 0 ? sumMfe / completed : na), text_color = chart.fg_color)
+            table.cell(evaluationPanel, 5, row, evaluationNumber(completed > 0 ? sumMae / completed : na), text_color = chart.fg_color)
+        table.cell(evaluationPanel, 0, 5, "正向比例≠胜率", text_color = chart.fg_color)
+        table.cell(evaluationPanel, 1, 5, "允许重叠 · 不含费用", text_color = chart.fg_color)
+        table.cell(evaluationPanel, 2, 5, "ATR无效跳过 " + str.tostring(skippedObservationAtr), text_color = chart.fg_color)
+    if showEvaluationSample
+        if not na(selectedSample)
+            int w = evaluationSampleWindow == 5 ? 0 : evaluationSampleWindow == 10 ? 1 : 2
+            int endTime = array.get(selectedSample.endTimes, w)
+            float endPrice = array.get(selectedSample.endPrices, w)
+            string sampleText = (selectedSample.side == 1 ? "多头" : "空头") + "样本 #" + str.tostring(evaluationSampleRank)
+            evaluationStart := label.new(selectedSample.bornTime, selectedSample.baseline, sampleText + "\n信号收盘 " + str.tostring(selectedSample.baseline, format.mintick) + (na(endTime) ? "\n等待 " + str.tostring(evaluationSampleWindow) + " 根窗口完成" : ""), xloc = xloc.bar_time, style = label.style_label_up, color = color.new(color.blue, 15), textcolor = color.white, size = size.small)
+            if not na(endTime)
+                evaluationPath := line.new(selectedSample.bornTime, selectedSample.baseline, endTime, endPrice, xloc = xloc.bar_time, color = color.blue, width = 2, style = line.style_dashed)
+                evaluationEnd := label.new(endTime, endPrice, str.tostring(evaluationSampleWindow) + " 根结束\n收益 " + evaluationNumber(array.get(selectedSample.returns, w)) + " ATR\n顺向 " + evaluationNumber(array.get(selectedSample.favorable, w)) + " / 逆向 " + evaluationNumber(array.get(selectedSample.adverse, w)), xloc = xloc.bar_time, style = label.style_label_down, color = color.new(color.blue, 15), textcolor = color.white, size = size.small)
+        else if showSignalEvaluation
+            table.cell(evaluationPanel, 0, 6, "所选样本不存在", text_color = color.orange)
