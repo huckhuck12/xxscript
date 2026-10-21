@@ -45,6 +45,23 @@ assert.deepEqual(summarize([{ side: 1, result: { ret: 1 } }, { side: -1, result:
 assert.deepEqual(summarize([]), { count: 0, positive: null }, "empty sample set has no reported positive ratio");
 
 const pine = readFileSync(new URL("../market_structure.pine", import.meta.url), "utf8");
+function extremeBars(following, side) {
+  const highs = following.map(b => b.high), lows = following.map(b => b.low);
+  const hi = highs.indexOf(Math.max(...highs)) + 1, lo = lows.indexOf(Math.min(...lows)) + 1;
+  return side === 1 ? [hi, lo] : [lo, hi];
+}
+assert.deepEqual(extremeBars(bars.slice(1), 1), [5, 2], "final favorable extreme follows final adverse extreme in this long sample");
+assert.deepEqual(extremeBars(mirrored.slice(1), -1), [5, 2], "short extreme timing mirrors long timing");
+assert.deepEqual(extremeBars([{ high: 110, low: 90 }, { high: 110, low: 90 }], 1), [1, 1], "equal extremes retain first occurrence; same candle cannot establish order");
+assert.match(pine, /high > sample\.highestAfter/, "strict comparison preserves first occurrence of equal highs");
+assert.match(pine, /low < sample\.lowestAfter/, "strict comparison preserves first occurrence of equal lows");
+assert.match(pine, /array\.set\(sample\.mfeBars, w, mfe > 0/, "no favorable excursion has no invented timestamp");
+assert.match(pine, /array\.set\(sample\.maeBars, w, mae > 0/, "no adverse excursion has no invented timestamp");
+assert.match(pine, /favorableBar == adverseBar \? "同根，先后未知"/, "same-candle extremes are explicitly ambiguous");
+assert.match(pine, /signalSide \* \(level - close\) > 0/, "only confirmed levels ahead of signal price qualify for forward space");
+assert.match(pine, /newSample\.forwardLevel := level/, "forward reference is frozen on creation of the sample");
+assert.match(pine, /\[triggered, confirmedBoundary\]/, "confirmation exports its actual zone boundary without changing the signal condition");
+assert.match(pine, /evaluationStart := label\.new\(selectedSample\.bornTime, selectedSample\.baseline, "起点"/, "chart label stays short while details live in table");
 assert.match(pine, /array\.from\(5, 10, 20\)/);
 assert.match(pine, /if age > 0 and age <= 20/, "never consume the signal candle or post-window bars");
 assert.match(pine, /if age == array\.get\(observationWindows, w\)/, "finalize only at exact window endpoints");

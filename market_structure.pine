@@ -290,6 +290,7 @@ type ZoneEntryState
 
 confirmZoneEntries(array<box> zones, array<int> sides, array<int> bornBars, map<string, ZoneEntryState> states, bool enabled, int referenceSide, bool directionStable, bool activeSetup, int setupSide, float setupTopPrice, float setupBottomPrice, bool bullishCandle, bool bearishCandle, float shortLow, float shortHigh) =>
     bool triggered = false
+    float confirmedBoundary = na
     if barstate.isconfirmed
         array<string> liveKeys = array.new_string()
         if array.size(zones) > 0
@@ -321,6 +322,10 @@ confirmZoneEntries(array<box> zones, array<int> sides, array<int> bornBars, map<
                         state.touchedBar := na
                         state.sweptBar := na
                         triggered := true
+                        // Multiple confirmations: retain the boundary nearest the close.
+                        float boundary = side == 1 ? top : bottom
+                        if na(confirmedBoundary) or math.abs(close - boundary) < math.abs(close - confirmedBoundary)
+                            confirmedBoundary := boundary
                     else if high >= bottom and low <= top
                         if na(state.touchedBar)
                             state.touchedBar := bar_index
@@ -332,7 +337,7 @@ confirmZoneEntries(array<box> zones, array<int> sides, array<int> bornBars, map<
         for key in map.keys(states)
             if not array.includes(liveKeys, key)
                 map.remove(states, key)
-    triggered
+    [triggered, confirmedBoundary]
 
 retireSameSideZones(array<box> zones, array<int> sides, array<int> bornBars, array<bool> seen, array<box> history, int side, bool keepHistory, int historyLimit, int endTime, string kind) =>
     int position = array.size(zones) - 1
@@ -815,8 +820,9 @@ var obEntryStates = map.new<string, ZoneEntryState>()
 var fvgEntryStates = map.new<string, ZoneEntryState>()
 bool regionEntryMode = entryMethod == "OB/FVG 确认"
 bool entryDirectionStable = observationSide != 0 and observationSide == observationSide[1]
-bool obEntrySignal = confirmZoneEntries(obZones, obZoneSides, obZoneBornBars, obEntryStates, regionEntryMode and showObCandidates, observationSide, entryDirectionStable, setupActive, tradeSide, setupTop, setupBottom, bullishTrendCandle, bearishTrendCandle, sweepRefLow, sweepRefHigh)
-bool fvgEntrySignal = confirmZoneEntries(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgEntryStates, regionEntryMode and showFvgCandidates, observationSide, entryDirectionStable, setupActive, tradeSide, setupTop, setupBottom, bullishTrendCandle, bearishTrendCandle, sweepRefLow, sweepRefHigh)
+[obEntrySignal, obEntryBoundary] = confirmZoneEntries(obZones, obZoneSides, obZoneBornBars, obEntryStates, regionEntryMode and showObCandidates, observationSide, entryDirectionStable, setupActive, tradeSide, setupTop, setupBottom, bullishTrendCandle, bearishTrendCandle, sweepRefLow, sweepRefHigh)
+[fvgEntrySignal, fvgEntryBoundary] = confirmZoneEntries(fvgZones, fvgZoneSides, fvgZoneBornBars, fvgEntryStates, regionEntryMode and showFvgCandidates, observationSide, entryDirectionStable, setupActive, tradeSide, setupTop, setupBottom, bullishTrendCandle, bearishTrendCandle, sweepRefLow, sweepRefHigh)
+float entryObservationBoundary = na(obEntryBoundary) ? fvgEntryBoundary : na(fvgEntryBoundary) ? obEntryBoundary : math.abs(close - obEntryBoundary) <= math.abs(close - fvgEntryBoundary) ? obEntryBoundary : fvgEntryBoundary
 bool longRegionEntry = (obEntrySignal or fvgEntrySignal) and observationSide == 1
 bool shortRegionEntry = (obEntrySignal or fvgEntrySignal) and observationSide == -1
 if alertEntryConfirmation and barstate.isrealtime and (longRegionEntry or shortRegionEntry)
@@ -930,6 +936,13 @@ type SignalObservation
     array<float> adverse
     array<int> endTimes
     array<float> endPrices
+    int highestBar = na
+    int lowestBar = na
+    array<int> mfeBars = na
+    array<int> maeBars = na
+    float zoneBoundary = na
+    float forwardLevel = na
+    string zoneSource = ""
 
 evaluationMatches(int side) =>
     evaluationSide == "全部" or (evaluationSide == "仅多头" ? side == 1 : side == -1)
@@ -945,8 +958,12 @@ if barstate.isconfirmed
         for sample in observations
             int age = bar_index - sample.bornBar
             if age > 0 and age <= 20
-                sample.highestAfter := na(sample.highestAfter) ? high : math.max(sample.highestAfter, high)
-                sample.lowestAfter := na(sample.lowestAfter) ? low : math.min(sample.lowestAfter, low)
+                if na(sample.highestAfter) or high > sample.highestAfter
+                    sample.highestAfter := high
+                    sample.highestBar := age
+                if na(sample.lowestAfter) or low < sample.lowestAfter
+                    sample.lowestAfter := low
+                    sample.lowestBar := age
                 for w = 0 to 2
                     if age == array.get(observationWindows, w)
                         float forwardReturn = sample.side * (close - sample.baseline) / sample.atrSnapshot
@@ -957,21 +974,35 @@ if barstate.isconfirmed
                         array.set(sample.adverse, w, mae)
                         array.set(sample.endTimes, w, time)
                         array.set(sample.endPrices, w, close)
+                        array.set(sample.mfeBars, w, mfe > 0 ? (sample.side == 1 ? sample.highestBar : sample.lowestBar) : na)
+                        array.set(sample.maeBars, w, mae > 0 ? (sample.side == 1 ? sample.lowestBar : sample.highestBar) : na)
     int signalSide = regionEntryMode ? (longRegionEntry ? 1 : shortRegionEntry ? -1 : 0) : (longSetupSignal ? 1 : shortSetupSignal ? -1 : 0)
     if signalSide != 0
         if not na(closeAtr) and closeAtr > 0
-            array.push(observations, SignalObservation.new(bar_index, time, signalSide, close, closeAtr, na, na, array.new_float(3, na), array.new_float(3, na), array.new_float(3, na), array.new_int(3, na), array.new_float(3, na)))
+            SignalObservation newSample = SignalObservation.new(bar_index, time, signalSide, close, closeAtr, na, na, array.new_float(3, na), array.new_float(3, na), array.new_float(3, na), array.new_int(3, na), array.new_float(3, na))
+            newSample.mfeBars := array.new_int(3, na)
+            newSample.maeBars := array.new_int(3, na)
+            newSample.zoneBoundary := regionEntryMode ? entryObservationBoundary : signalSide == 1 ? setupTop : setupBottom
+            newSample.zoneSource := regionEntryMode ? (obEntrySignal and fvgEntrySignal ? "OB+FVG最近边界" : obEntrySignal ? "OB" : "FVG") : "回撤区"
+            // Nearest level still ahead, using retained medium pivots known NOW only.
+            if array.size(tradeMidPrices) > 0
+                for p = 0 to array.size(tradeMidPrices) - 1
+                    float level = array.get(tradeMidPrices, p)
+                    if array.get(tradeMidTypes, p) == signalSide and signalSide * (level - close) > 0
+                        if na(newSample.forwardLevel) or math.abs(level - close) < math.abs(newSample.forwardLevel - close)
+                            newSample.forwardLevel := level
+            array.push(observations, newSample)
             if array.size(observations) > evaluationLimit
                 array.shift(observations)
         else
             skippedObservationAtr += 1
 
-var table evaluationPanel = table.new(position.bottom_right, 6, 7, border_width = 1)
+var table evaluationPanel = table.new(position.bottom_right, 6, 12, border_width = 1)
 var line evaluationPath = na
 var label evaluationStart = na
 var label evaluationEnd = na
 if barstate.islast
-    table.clear(evaluationPanel, 0, 0, 5, 6)
+    table.clear(evaluationPanel, 0, 0, 5, 11)
     if not na(evaluationPath)
         line.delete(evaluationPath)
         evaluationPath := na
@@ -1029,9 +1060,27 @@ if barstate.islast
             int endTime = array.get(selectedSample.endTimes, w)
             float endPrice = array.get(selectedSample.endPrices, w)
             string sampleText = (selectedSample.side == 1 ? "多头" : "空头") + "样本 #" + str.tostring(evaluationSampleRank)
-            evaluationStart := label.new(selectedSample.bornTime, selectedSample.baseline, sampleText + "\n信号收盘 " + str.tostring(selectedSample.baseline, format.mintick) + (na(endTime) ? "\n等待 " + str.tostring(evaluationSampleWindow) + " 根窗口完成" : ""), xloc = xloc.bar_time, style = label.style_label_up, color = color.new(color.blue, 15), textcolor = color.white, size = size.small)
+            evaluationStart := label.new(selectedSample.bornTime, selectedSample.baseline, "起点", xloc = xloc.bar_time, style = label.style_label_up, color = color.new(color.blue, 15), textcolor = color.white, size = size.tiny)
+            table.cell(evaluationPanel, 0, 6, sampleText, text_color = chart.fg_color)
+            table.cell(evaluationPanel, 1, 6, str.format_time(selectedSample.bornTime, "MM-dd HH:mm", syminfo.timezone), text_color = chart.fg_color)
+            table.cell(evaluationPanel, 2, 6, "收盘 " + str.tostring(selectedSample.baseline, format.mintick), text_color = chart.fg_color)
+            table.cell(evaluationPanel, 3, 6, "ATR " + evaluationNumber(selectedSample.atrSnapshot), text_color = chart.fg_color)
+            table.cell(evaluationPanel, 0, 7, selectedSample.zoneSource, text_color = chart.fg_color)
+            table.cell(evaluationPanel, 1, 7, "离区 " + evaluationNumber(math.abs(selectedSample.baseline - selectedSample.zoneBoundary) / selectedSample.atrSnapshot) + " ATR", text_color = chart.fg_color)
+            table.cell(evaluationPanel, 2, 7, "前方中期点 " + (na(selectedSample.forwardLevel) ? "未知" : str.tostring(selectedSample.forwardLevel, format.mintick)), text_color = chart.fg_color)
+            table.cell(evaluationPanel, 3, 7, "空间 " + evaluationNumber(math.abs(selectedSample.forwardLevel - selectedSample.baseline) / selectedSample.atrSnapshot) + " ATR", text_color = chart.fg_color)
+            for detailWindow = 0 to 2
+                int favorableBar = array.get(selectedSample.mfeBars, detailWindow)
+                int adverseBar = array.get(selectedSample.maeBars, detailWindow)
+                bool complete = not na(array.get(selectedSample.returns, detailWindow))
+                string orderText = not complete ? "等待完成" : na(favorableBar) or na(adverseBar) ? "单向/无幅度" : favorableBar == adverseBar ? "同根，先后未知" : favorableBar < adverseBar ? "顺向极值先" : "逆向极值先"
+                table.cell(evaluationPanel, 0, 8 + detailWindow, str.tostring(array.get(observationWindows, detailWindow)) + " 根 · " + orderText, text_color = chart.fg_color)
+                table.cell(evaluationPanel, 1, 8 + detailWindow, "收益 " + evaluationNumber(array.get(selectedSample.returns, detailWindow)), text_color = chart.fg_color)
+                table.cell(evaluationPanel, 2, 8 + detailWindow, "顺 " + evaluationNumber(array.get(selectedSample.favorable, detailWindow)) + " @" + (na(favorableBar) ? "—" : str.tostring(favorableBar)), text_color = chart.fg_color)
+                table.cell(evaluationPanel, 3, 8 + detailWindow, "逆 " + evaluationNumber(array.get(selectedSample.adverse, detailWindow)) + " @" + (na(adverseBar) ? "—" : str.tostring(adverseBar)), text_color = chart.fg_color)
+            table.cell(evaluationPanel, 0, 11, "幅度单位 ATR · @为信号后第几根", text_color = chart.fg_color)
             if not na(endTime)
                 evaluationPath := line.new(selectedSample.bornTime, selectedSample.baseline, endTime, endPrice, xloc = xloc.bar_time, color = color.blue, width = 2, style = line.style_dashed)
-                evaluationEnd := label.new(endTime, endPrice, str.tostring(evaluationSampleWindow) + " 根结束\n收益 " + evaluationNumber(array.get(selectedSample.returns, w)) + " ATR\n顺向 " + evaluationNumber(array.get(selectedSample.favorable, w)) + " / 逆向 " + evaluationNumber(array.get(selectedSample.adverse, w)), xloc = xloc.bar_time, style = label.style_label_down, color = color.new(color.blue, 15), textcolor = color.white, size = size.small)
-        else if showSignalEvaluation
+                evaluationEnd := label.new(endTime, endPrice, str.tostring(evaluationSampleWindow) + "根终点", xloc = xloc.bar_time, style = label.style_label_down, color = color.new(color.blue, 15), textcolor = color.white, size = size.tiny)
+        else
             table.cell(evaluationPanel, 0, 6, "所选样本不存在", text_color = color.orange)

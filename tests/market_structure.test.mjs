@@ -359,7 +359,7 @@ assert.deepEqual(regionEntries([regionBars[0], regionBars[2], regionBars[3]]), [
 const pine = readFileSync(new URL("../market_structure.pine", import.meta.url), "utf8");
 assert.match(pine, /entryMethod = input\.string\("OB\/FVG 确认"/, "default signal mode uses region confirmation");
 assert.match(pine, /if barstate\.isconfirmed\s+array<string> liveKeys/, "region states advance only on confirmed candles");
-assert.ok(pine.indexOf("bool obEntrySignal = confirmZoneEntries") > pine.indexOf("addCandidateZone(fvgZones"), "confirmation evaluates after invalidation, replacement and zone creation");
+assert.ok(pine.indexOf("[obEntrySignal, obEntryBoundary] = confirmZoneEntries") > pine.indexOf("addCandidateZone(fvgZones"), "confirmation evaluates after invalidation, replacement and zone creation");
 assert.match(pine, /observationSide != 0 and observationSide == observationSide\[1\]/, "direction must already be known before the touch candle");
 assert.match(pine, /not state\.used and bar_index > born/, "each region signals once and excludes its creation candle");
 assert.match(pine, /bar_index > state\.touchedBar and swept and trendResponse/, "touch and trend confirmation cannot share a candle");
@@ -395,8 +395,8 @@ for (const condition of [
 for (const event of ["autoSwitchUp", "autoSwitchDown", "autoConflict"])
   assert.ok(pine.includes(`plotshape(showStructureVisuals and ${event},`), `${event} markers are hidden in EMA mode`);
 assert.doesNotMatch(pine.match(/bool setupActive = .*/)[0], /showStructureVisuals/, "visual suppression does not disable swing calculations");
-assert.doesNotMatch(pine.match(/bool obEntrySignal = .*/)[0], /showStructureVisuals/, "EMA presentation keeps OB entry confirmation active");
-assert.doesNotMatch(pine.match(/bool fvgEntrySignal = .*/)[0], /showStructureVisuals/, "EMA presentation keeps FVG entry confirmation active");
+assert.doesNotMatch(pine.match(/\[obEntrySignal, obEntryBoundary\] = .*/)[0], /showStructureVisuals/, "EMA presentation keeps OB entry confirmation active");
+assert.doesNotMatch(pine.match(/\[fvgEntrySignal, fvgEntryBoundary\] = .*/)[0], /showStructureVisuals/, "EMA presentation keeps FVG entry confirmation active");
 assert.match(pine, /varip touchAlertKeys = array\.new_string\(\)/, "arrival deduplication survives realtime rollback");
 assert.match(pine, /close >= bottom and close <= top/, "instant arrival uses the current price, not the cumulative bar range");
 assert.match(pine, /bar_index > array\.get\(bornBars, i\)/, "a creation-bar gap is not treated as a return to the zone");
