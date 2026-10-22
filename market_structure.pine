@@ -19,7 +19,8 @@ groupHistory = "高级 · 历史与数量"
 groupFib = "高级 · 参考线与颜色"
 advancedSettings = input.bool(false, "启用高级参数调整", tooltip = "日常只需调整常用显示、方向和提醒。高级参数保留当前值，开启后才可编辑；并非隐藏参数。区域标注区分暂定方向和严格确认方向，灰色历史框不代表当前机会。", group = groupCommon, display = display.none)
 showDirectionStatus = input.bool(true, "显示方向状态", tooltip = "右上角显示所选方向来源和结果。结构分级模式先给暂偏方向，严格确认后升级；EMA 模式只表示所选参考周期已收盘均线的斜率。暂定方向不提前触发回撤信号。", group = groupCommon, display = display.none)
-directionMethod = input.string("中期结构（分级）", "方向判断方式", options = ["中期结构（分级）", "中期结构（严格）", "高周期 EMA"], tooltip = "分级：保留暂偏方向与严格确认，区域入场可用暂偏方向。严格：只用严格确认方向，中性不放行。EMA：比较最近两根已收盘参考周期 EMA 的斜率，相等为中性；参考周期必须大于当前标准时间图周期。统一用于方向状态、区域标注、入场候选与通知。斐波那契回撤区和原回撤扫荡信号仍需严格中期摆动，且与所选方向一致；不改变 OB/FVG 生成或失效规则。趋势模式仍控制中期结构算法，比较方向时建议使用自动/双向。", group = groupCommon, display = display.none)
+directionMethod = input.string("中期结构（分级）", "方向判断方式", options = ["中期结构（分级）", "中期结构（严格）", "高周期 EMA", "高周期 EMA＋中期结构"], tooltip = "分级：允许暂偏结构方向。严格：仅严格确认方向。EMA：按已收盘参考周期 EMA 斜率定方向。联合：EMA 背景与当前图表分级结构同向才放行，否则等待；同向后只接受新触区，不强制先出现反向回调。参考周期须大于图表周期。原斐波那契信号仍需严格摆动。不改变区域生成失效规则；趋势模式仍控制结构算法，比较时建议自动/双向。", group = groupCommon, display = display.none)
+jointShowStructure = input.bool(false, "联合模式显示中期结构", tooltip = "联合模式默认只显示 EMA、OB/FVG 与入场候选；开启后按原显示设置恢复中期点线和斐波那契辅助图形。不影响内部计算。", group = groupCommon, display = display.none)
 directionEmaTimeframe = input.timeframe("5", "EMA 参考周期", tooltip = "仅用于高周期 EMA 方向，须大于当前图表周期。例如 1 分钟图可选 5 分钟，3 分钟图可选 15 分钟。EMA 模式将各次已收盘 EMA 更新点连成折线；连接段只是视觉连线，方向仍使用最新已确认值。自动隐藏中期结构及斐波那契辅助图形，保留计算和区域信号。切换图表周期后请检查此项，不会自动调整。不支持时显示中性且不画 EMA。", group = groupCommon, display = display.none)
 directionEmaLength = input.int(50, "方向 EMA 长度", minval = 1, maxval = 500, tooltip = "所选参考周期上的 EMA 长度，默认 50。EMA 上升偏多、下降偏空，不附加价格位于均线上下的条件；只使用已收盘参考周期值。高周期 EMA 不等同于按时间倍数换算的低周期 EMA。", group = groupMid, display = display.none, active = advancedSettings)
 
@@ -89,7 +90,9 @@ fibShortColor = input.color(color.red, "顺势空头颜色", group = groupFib, d
 shortColor = color.new(color.teal, 15)
 midColor = color.rgb(194, 64, 55)
 // Direction source controls presentation only; medium structure still generates zones.
-bool showStructureVisuals = directionMethod != "高周期 EMA"
+bool jointDirectionMode = directionMethod == "高周期 EMA＋中期结构"
+bool useEmaBackground = directionMethod == "高周期 EMA" or jointDirectionMode
+bool showStructureVisuals = directionMethod != "高周期 EMA" and (not jointDirectionMode or jointShowStructure)
 ph = ta.pivothigh(high, leftBars, rightBars)
 pl = ta.pivotlow(low, leftBars, rightBars)
 leftHigh = ta.highest(high[rightBars + 1], leftBars)
@@ -195,8 +198,8 @@ retireCandidateZone(array<box> zones, array<int> sides, array<int> bornBars, arr
     array.size(zones)
 
 zoneDirectionText(string kind, int side, int referenceSide, bool directionConfirmed) =>
-    string alignedText = directionMethod == "高周期 EMA" ? (side == 1 ? "EMA同向多 " : "EMA同向空 ") : directionConfirmed ? (side == 1 ? "顺势多 " : "顺势空 ") : (side == 1 ? "暂偏多 " : "暂偏空 ")
-    referenceSide == 0 ? (side == 1 ? "多头 " : "空头 ") + kind + " · 方向未确认" : side == referenceSide ? alignedText + kind : "逆势 " + kind + (side == 1 ? " · 支撑" : " · 阻力")
+    string alignedText = jointDirectionMode ? (side == 1 ? "联合同向多 " : "联合同向空 ") : directionMethod == "高周期 EMA" ? (side == 1 ? "EMA同向多 " : "EMA同向空 ") : directionConfirmed ? (side == 1 ? "顺势多 " : "顺势空 ") : (side == 1 ? "暂偏多 " : "暂偏空 ")
+    referenceSide == 0 ? (side == 1 ? "多头 " : "空头 ") + kind + (jointDirectionMode ? " · 等待联合同向" : " · 方向未确认") : side == referenceSide ? alignedText + kind : "逆势 " + kind + (side == 1 ? " · 支撑" : " · 阻力")
 
 styleCandidateZone(box candidate, color zoneColor, bool visible, string kind, int side, int referenceSide, bool directionConfirmed) =>
     bool aligned = referenceSide != 0 and side == referenceSide
@@ -643,9 +646,11 @@ int emaObservationSide = not emaDirectionReady ? 0 : directionEma > directionEma
 // Connect confirmed update points rather than drawing repeated horizontal steps.
 // Intermediate line segments are visual interpolation, never direction inputs.
 bool emaPlotPoint = timeframe.change(directionEmaTimeframe) or barstate.islast
-plot(not showStructureVisuals and emaDirectionReady and emaPlotPoint ? directionEma : na, "方向 EMA（参考周期已收盘）", color = emaObservationSide == 1 ? fibLongColor : emaObservationSide == -1 ? fibShortColor : color.gray, linewidth = 2, style = plot.style_line)
-int observationSide = directionMethod == "高周期 EMA" ? emaObservationSide : directionMethod == "中期结构（严格）" ? confirmedObservationSide : confirmedObservationSide != 0 ? confirmedObservationSide : biasSide
-bool observationConfirmed = directionMethod == "高周期 EMA" ? emaDirectionReady and emaObservationSide != 0 : confirmedObservationSide != 0
+plot(useEmaBackground and emaDirectionReady and emaPlotPoint ? directionEma : na, "方向 EMA（参考周期已收盘）", color = emaObservationSide == 1 ? fibLongColor : emaObservationSide == -1 ? fibShortColor : color.gray, linewidth = 2, style = plot.style_line)
+int structureObservationSide = confirmedObservationSide != 0 ? confirmedObservationSide : biasSide
+int jointObservationSide = emaObservationSide != 0 and emaObservationSide == structureObservationSide ? emaObservationSide : 0
+int observationSide = jointDirectionMode ? jointObservationSide : directionMethod == "高周期 EMA" ? emaObservationSide : directionMethod == "中期结构（严格）" ? confirmedObservationSide : structureObservationSide
+bool observationConfirmed = jointDirectionMode ? jointObservationSide != 0 and confirmedObservationSide == jointObservationSide : directionMethod == "高周期 EMA" ? emaDirectionReady and emaObservationSide != 0 : confirmedObservationSide != 0
 bool tradeDirectionAllowed = confirmedObservationSide != 0 and observationSide == tradeSide
 
 float fibNear = math.min(setupFibNear, setupFibFar)
@@ -896,6 +901,11 @@ if barstate.islast
     if showDirectionStatus
         string directionText = observationSide == 0 ? "方向未确认" : observationConfirmed ? (observationSide == 1 ? "多头已确认" : "空头已确认") : (observationSide == 1 ? "暂偏多 · 等待确认" : "暂偏空 · 等待确认")
         directionText := directionMethod == "高周期 EMA" ? "EMA" + str.tostring(directionEmaLength) + " · 参考周期 " + directionEmaTimeframe + " · " + (not emaDirectionSupported ? "需标准时间图且参考周期大于图表周期" : not emaDirectionReady ? "等待数据" : observationSide == 1 ? "偏多" : observationSide == -1 ? "偏空" : "中性") : directionMethod + " · " + directionText
+        if jointDirectionMode
+            string backgroundText = not emaDirectionSupported ? "参考周期不适用" : not emaDirectionReady ? "等待数据" : emaObservationSide == 1 ? "偏多" : emaObservationSide == -1 ? "偏空" : "中性"
+            string structureText = structureObservationSide == 0 ? "中性" : confirmedObservationSide != 0 ? (structureObservationSide == 1 ? "确认多" : "确认空") : (structureObservationSide == 1 ? "暂偏多" : "暂偏空")
+            string jointText = observationSide != 0 ? "同向，等待区域确认" : emaObservationSide != 0 and structureObservationSide == -emaObservationSide ? "回调/分歧，等待同向" : "等待同向"
+            directionText := "EMA" + str.tostring(directionEmaLength) + "（" + directionEmaTimeframe + "）背景：" + backgroundText + "\n中期结构：" + structureText + "｜" + jointText
         color directionColor = observationSide == 1 ? fibLongColor : observationSide == -1 ? fibShortColor : color.gray
         table.cell(directionStatus, 0, 0, directionText, text_color = directionColor, bgcolor = color.new(directionColor, 92), text_size = size.small)
     else

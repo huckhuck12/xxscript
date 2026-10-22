@@ -368,13 +368,13 @@ assert.match(pine, /bullishCandle and close > top : bearishCandle and close < bo
 assert.match(pine, /if not array\.includes\(liveKeys, key\)\s+map\.remove\(states, key\)/, "removed regions cannot leave unbounded stale state");
 assert.match(pine, /alertcondition\(not regionEntryMode and longSetupSignal/, "legacy alerts are suppressed in region mode");
 assert.match(pine, /directionMethod = input\.string\("中期结构（分级）"/, "default preserves graded structure direction");
-assert.match(pine, /options = \["中期结构（分级）", "中期结构（严格）", "高周期 EMA"\]/, "all three direction sources can be selected");
+assert.match(pine, /options = \["中期结构（分级）", "中期结构（严格）", "高周期 EMA", "高周期 EMA＋中期结构"\]/, "all four direction sources can be selected");
 assert.match(pine, /directionEmaTimeframe = input\.timeframe\("5",/, "EMA reference timeframe is configurable and defaults to five minutes");
 assert.match(pine, /request\.security\(syminfo\.tickerid, directionEmaTimeframe, \[ta\.ema\(close, directionEmaLength\)\[1\], ta\.ema\(close, directionEmaLength\)\[2\]\], lookahead = barmerge\.lookahead_on\)/, "selected EMA timeframe requests two completed values without future leakage");
 assert.match(pine, /chart\.is_standard and not timeframe\.isticks and timeframe\.in_seconds\(\) < timeframe\.in_seconds\(directionEmaTimeframe\)/, "EMA rejects ticks, synthetic charts, and references not strictly above the chart timeframe");
 assert.match(pine, /emaDirectionSupported and not na\(directionEma\) and not na\(directionEmaPrevious\)/, "EMA requires both completed values and a supported chart");
 assert.match(pine, /int emaObservationSide = not emaDirectionReady \? 0 : directionEma > directionEmaPrevious \? 1 : directionEma < directionEmaPrevious \? -1 : 0/, "slope alone determines EMA direction; equal or unavailable is neutral");
-assert.match(pine, /int observationSide = directionMethod == "高周期 EMA" \? emaObservationSide : directionMethod == "中期结构（严格）" \? confirmedObservationSide : confirmedObservationSide != 0 \? confirmedObservationSide : biasSide/, "strict mode cannot fall back to a provisional direction");
+assert.match(pine, /int observationSide = jointDirectionMode \? jointObservationSide : directionMethod == "高周期 EMA" \? emaObservationSide : directionMethod == "中期结构（严格）" \? confirmedObservationSide : structureObservationSide/, "joint routing preserves strict and single-source direction modes");
 assert.match(pine, /bool tradeDirectionAllowed = confirmedObservationSide != 0 and observationSide == tradeSide/, "EMA never bypasses strict swing qualification");
 assert.match(pine, /bool setupActive = .* and tradeDirectionAllowed/, "retracement signals honor the selected direction");
 assert.match(pine, /if showTradeFib and tradeDirectionAllowed/, "trade reference lines honor the same direction gate");
@@ -382,7 +382,20 @@ assert.match(pine, /if not setupActive\s+pendingSweepSide := 0\s+pendingSweepBar
 assert.match(pine, /EMA同向多/, "EMA zone wording does not claim confirmed medium structure");
 assert.match(pine, /bool showStructureVisuals = directionMethod != "高周期 EMA"/, "EMA direction automatically hides medium structure visuals");
 assert.match(pine, /bool emaPlotPoint = timeframe\.change\(directionEmaTimeframe\) or barstate\.islast/, "EMA line connects confirmed update points and extends to the current bar");
-assert.match(pine, /plot\(not showStructureVisuals and emaDirectionReady and emaPlotPoint \? directionEma : na, "方向 EMA（参考周期已收盘）".*style = plot\.style_line\)/, "EMA overlay connects confirmed samples without changing the direction input");
+assert.match(pine, /plot\(useEmaBackground and emaDirectionReady and emaPlotPoint \? directionEma : na, "方向 EMA（参考周期已收盘）".*style = plot\.style_line\)/, "both EMA modes plot confirmed samples, including when joint structure is visible");
+assert.match(pine, /int structureObservationSide = confirmedObservationSide != 0 \? confirmedObservationSide : biasSide/, "joint local direction reuses graded structure with provisional fallback");
+assert.match(pine, /int jointObservationSide = emaObservationSide != 0 and emaObservationSide == structureObservationSide \? emaObservationSide : 0/, "joint mode requires nonzero agreement");
+assert.match(pine, /jointShowStructure = input\.bool\(false,/, "joint structure visuals default off");
+assert.match(pine, /and \(not jointDirectionMode or jointShowStructure\)/, "joint structure visualization is optional");
+const jointDirection = (ema, local) => ema !== 0 && ema === local ? ema : 0;
+for (const ema of [-1, 0, 1]) for (const local of [-1, 0, 1]) {
+  assert.equal(jointDirection(ema, local), ema && ema === local ? ema : 0, "joint truth table rejects neutral or conflicting inputs");
+}
+const jointBars = regionBars.map((bar, i) => ({ ...bar, direction: jointDirection(1, i === 1 ? -1 : 1) }));
+assert.deepEqual(regionEntries(jointBars), [], "alignment cannot reuse a touch made during a counter-background pullback");
+const resumedJointBars = [regionBars[0], { ...regionBars[1], direction: 0 }, regionBars[1], regionBars[1], regionBars[2]];
+assert.deepEqual(regionEntries(resumedJointBars), [4], "new touch after alignment can confirm without requiring a new reversal cycle");
+assert.deepEqual(regionEntries(regionBars.map((bar, i) => ({ ...bar, direction: i === 2 ? 0 : 1 }))), [], "loss of alignment cancels pending confirmation before a trend candle");
 assert.match(pine, /midColor, 2, showMidLines and showStructureVisuals, midContainment/, "medium lines respect EMA presentation mode");
 for (const condition of [
   "showMidPoints and array.size(midTimes) > 0",
